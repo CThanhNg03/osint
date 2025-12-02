@@ -1,11 +1,13 @@
 # Python
 __pycache__/
+__pycache__/*
 *.py[cod]
 *$py.class
 *.so
 .Python
 env/
 venv/
+.venv
 ENV/
 build/
 develop-eggs/
@@ -27,6 +29,9 @@ wheels/
 .env
 .env.local
 .env.*.local
+**/.env
+!.env.example
+
 
 # IDE
 .vscode/

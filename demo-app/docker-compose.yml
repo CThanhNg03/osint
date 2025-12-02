@@ -12,8 +12,11 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://user:password@db:5432/mediamonitor
+      - EMBEDDING_BASE_URL=http://embedding:8080/v1
+      - EMBEDDING_API_KEY=localai
     depends_on:
       - db
+      - embedding
 
   frontend:
     build: ./frontend
@@ -28,7 +31,7 @@ services:
       - backend
 
   db:
-    image: postgres:15-alpine
+    image: ankane/pgvector:latest
     ports:
       - "5432:5432"
     environment:
@@ -38,5 +41,17 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  embedding:
+    image: ollama/ollama:latest
+    container_name: ollama-embed
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    command: serve
+
 volumes:
   postgres_data:
+  ollama_data:

@@ -1,86 +1,143 @@
-import os
-from openai import OpenAI
-from sqlalchemy.orm import Session
-from models import AnalysisLog
+﻿import os
 from datetime import datetime, timedelta
 
-# Configure Groq
+from openai import OpenAI
+from sqlalchemy.orm import Session
+
+from embedding_utils import generate_embedding
+from models import AnalysisLog
+
+# Configure Groq / OpenAI-compatible client
 client = OpenAI(
     api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
+    base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
 )
 
-async def answer_question(question: str, db: Session):
-    """
-    Trả lời câu hỏi của user bằng Groq dựa trên dữ liệu real-time đã thu thập
-    """
-    
-    # Lấy dữ liệu phân tích gần nhất (30 phút trước)
-    time_threshold = datetime.now() - timedelta(minutes=30)
-    recent_logs = db.query(AnalysisLog).filter(
-        AnalysisLog.timestamp >= time_threshold
-    ).order_by(AnalysisLog.timestamp.desc()).limit(10).all()
-    
-    # Xây dựng context từ database
-    context_parts = []
-    if recent_logs:
-        context_parts.append("=== DỮ LIỆU TIN TỨC GẦN NHẤT ===\n")
-        for log in recent_logs:
-            context_parts.append(f"""
-Thời gian: {log.timestamp.strftime('%H:%M:%S')}
-Nguồn: {log.source}
-Tóm tắt (EN): {log.summary}
-Dịch (VI): {log.vietnamese_translation}
-Từ khóa: {', '.join(log.trending_keywords or [])}
-Cảm xúc: {log.sentiment_score}
----
-""")
-    else:
-        context_parts.append("Hiện chưa có dữ liệu phân tích nào.\n")
-    
-    context = "".join(context_parts)
-    
-    # Tạo prompt cho Groq
-    prompt = f"""
-Bạn là trợ lý AI phân tích tin tức thông minh cho hệ thống giám sát truyền thông.
 
-CONTEXT (Dữ liệu real-time đã thu thập):
+def _prepare_text_for_embedding(log: AnalysisLog) -> str:
+    parts = [
+        log.summary or "",
+        log.vietnamese_translation or "",
+        log.raw_text or "",
+        ", ".join(log.trending_keywords or []),
+    ]
+    return "\n".join(p for p in parts if p)
+
+
+def _ensure_embeddings(logs, db: Session):
+    updated = False
+    for log in logs:
+        if log.embedding is None:
+            try:
+                text = _prepare_text_for_embedding(log)
+                embedding = generate_embedding(text)
+                if embedding:
+                    log.embedding = embedding
+                    updated = True
+            except Exception as exc:
+                print(f"Embedding generation failed for log {log.id}: {exc}")
+    if updated:
+        db.commit()
+
+
+async def answer_question(question: str, db: Session):
+    """Answer user question using vector search over recent AnalysisLog entries."""
+
+    time_threshold = datetime.now() - timedelta(minutes=30)
+
+    # Ensure recent logs have embeddings
+    recent_candidates = (
+        db.query(AnalysisLog)
+        .filter(AnalysisLog.timestamp >= time_threshold)
+        .order_by(AnalysisLog.timestamp.desc())
+        .limit(50)
+        .all()
+    )
+    _ensure_embeddings(recent_candidates, db)
+
+    question_embedding = []
+    try:
+        question_embedding = generate_embedding(question)
+    except Exception as exc:
+        print(f"Question embedding error: {exc}")
+
+    if question_embedding:
+        vector_logs = (
+            db.query(AnalysisLog)
+            .filter(
+                AnalysisLog.timestamp >= time_threshold,
+                AnalysisLog.embedding != None,  # noqa: E711
+            )
+            .order_by(AnalysisLog.embedding.cosine_distance(question_embedding))
+            .limit(8)
+            .all()
+        )
+    else:
+        vector_logs = []
+
+    if not vector_logs:
+        vector_logs = (
+            db.query(AnalysisLog)
+            .filter(AnalysisLog.timestamp >= time_threshold)
+            .order_by(AnalysisLog.timestamp.desc())
+            .limit(8)
+            .all()
+        )
+
+    context_parts = []
+    if vector_logs:
+        context_parts.append("=== Context from vector search (recent) ===\n")
+        for log in vector_logs:
+            keywords = ", ".join(log.trending_keywords or [])
+            context_parts.append(
+                f"Time: {log.timestamp.strftime('%H:%M:%S') if log.timestamp else ''}\n"
+                f"Source: {log.source}\n"
+                f"Summary (EN): {log.summary}\n"
+                f"Translation (VI): {log.vietnamese_translation}\n"
+                f"Keywords: {keywords}\n"
+                f"Sentiment: {log.sentiment_score}\n"
+                "---\n"
+            )
+    else:
+        context_parts.append("No analysis data available yet.\n")
+
+    context = "".join(context_parts)
+
+    prompt = f"""
+You are an AI news assistant. Use the context to answer in Vietnamese.
+
+CONTEXT (from vector search):
 {context}
 
-CÂU HỎI CỦA NGƯỜI DÙNG:
+QUESTION:
 {question}
 
-HƯỚNG DẪN:
-- Trả lời bằng tiếng Việt, ngắn gọn và chính xác
-- Dựa vào dữ liệu context ở trên để trả lời
-- Nếu không có đủ thông tin, hãy nói rõ
-- Nếu người dùng hỏi về "tin tức mới nhất", hãy tóm tắt các sự kiện gần đây
-- Nếu hỏi về xu hướng, hãy phân tích từ khóa và cảm xúc
-- Trả lời tối đa 3-4 câu
+GUIDELINES:
+- Reply in Vietnamese, concise and accurate
+- Use the provided context; if insufficient, say so
+- Limit to 3-4 sentences
 
-TRẢ LỜI:
+ANSWER:
 """
-    
+
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-            max_tokens=500
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=500,
         )
-        
+
         answer = response.choices[0].message.content.strip()
         return {
             "answer": answer,
-            "context_used": len(recent_logs),
-            "timestamp": datetime.now().isoformat()
+            "context_used": len(vector_logs),
+            "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         print(f"Groq Chat Error: {e}")
         return {
-            "answer": "Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi. Vui lòng thử lại.",
+            "answer": "Xin loi, toi gap loi khi xu ly cau hoi. Vui long thu lai.",
             "context_used": 0,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
