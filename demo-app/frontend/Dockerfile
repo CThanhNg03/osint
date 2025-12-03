@@ -2,8 +2,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm install
+COPY package.json ./
+RUN apk add --no-cache libc6-compat && npm install
 
 COPY . .
 

@@ -31,6 +31,17 @@ class Neo4jClient:
     def close(self) -> None:
         self._driver.close()
 
+    def ensure_constraints(self) -> None:
+        """Create uniqueness constraints to enable idempotent upserts."""
+        statements = [
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NewsItem) REQUIRE n.news_id IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (ev:Event) REQUIRE ev.event_id IS UNIQUE",
+        ]
+        with self.session() as session:
+            for stmt in statements:
+                session.execute_write(lambda tx, s=stmt: tx.run(s))
+
     def upsert_kg_item(
         self,
         news_id: int,

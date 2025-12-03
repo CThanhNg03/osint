@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
-import NeoVis, { NEOVIS_ADVANCED_CONFIG } from "neovis.js/dist/neovis.js";
+import NeoVis, { NEOVIS_ADVANCED_CONFIG } from "neovis.js";
 
-const KGExplorer = () => {
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+const KGExplorer = ({ externalTerms = [] }) => {
   const containerRef = useRef(null);
   const vizRef = useRef(null);
   const [terms, setTerms] = useState([]);
   const [newTerm, setNewTerm] = useState("");
   const [selectedNode, setSelectedNode] = useState(null);
   const [relatedNodes, setRelatedNodes] = useState([]);
+  const [crawlResults, setCrawlResults] = useState([]);
+  const [crawlLoading, setCrawlLoading] = useState(false);
+  const [crawlError, setCrawlError] = useState("");
+  const [crawlDisabled, setCrawlDisabled] = useState(false);
 
   const buildQuery = (termList) => {
     const cleaned = termList
@@ -157,7 +163,41 @@ const KGExplorer = () => {
     vizRef.current = viz;
   };
 
+  const handleCrawl = async () => {
+    const keyword = terms.join(" ").trim();
+    if (!keyword) return;
+    if (crawlDisabled) return;
+    setCrawlLoading(true);
+    setCrawlError("");
+    try {
+      const resp = await fetch(`${API_URL}/crawl`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keyword, limit: 5 }),
+      });
+      if (!resp.ok) {
+            if (resp.status === 429) {
+                setCrawlDisabled(true);
+                throw new Error("Rate limit hit (429). Live crawling paused. Please update/refresh your NewsAPI key or try later.");
+            }
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      setCrawlResults(data.articles || []);
+    } catch (err) {
+      setCrawlError(err.message || "Crawl failed");
+      setCrawlResults([]);
+    } finally {
+      setCrawlLoading(false);
+    }
+  };
+
   useEffect(() => {
+    if (externalTerms && externalTerms.length > 0) {
+      setTerms(externalTerms);
+      renderGraph(externalTerms);
+      return;
+    }
     renderGraph([]);
     return () => {
       if (vizRef.current) {
@@ -276,6 +316,41 @@ const KGExplorer = () => {
               </div>
             </div>
           )}
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold">Crawl related news</h4>
+              <button
+                onClick={handleCrawl}
+                disabled={crawlLoading || terms.length === 0 || crawlDisabled}
+                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-semibold disabled:opacity-50"
+              >
+                {crawlDisabled ? "Paused (429)" : crawlLoading ? "Fetching..." : "Crawl"}
+              </button>
+            </div>
+            {crawlError && <div className="text-red-400 text-xs mb-2">{crawlError}</div>}
+            <div className="space-y-2 max-h-48 overflow-auto">
+              {crawlResults.length === 0 && !crawlLoading && (
+                <div className="text-gray-500 text-xs">No results yet.</div>
+              )}
+              {crawlResults.map((a, idx) => (
+                <a
+                  key={idx}
+                  href={a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block p-2 bg-gray-900 border border-gray-800 rounded hover:border-indigo-500 transition"
+                >
+                  <div className="text-xs text-gray-400">{a.source}</div>
+                  <div className="text-sm font-semibold text-white line-clamp-2">
+                    {a.title}
+                  </div>
+                  <div className="text-xs text-gray-400 line-clamp-2">
+                    {a.description}
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>

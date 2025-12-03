@@ -1,4 +1,6 @@
 import asyncio
+import os
+import hashlib
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query
@@ -9,6 +11,7 @@ from sqlalchemy.orm import Session
 from chat_handler import answer_question
 from database import Base, engine, get_db
 from kg_worker import KGWorker
+import httpx
 from stream_processor import StreamProcessor
 from neo4j_client import Neo4jClient
 
@@ -31,6 +34,11 @@ processor = StreamProcessor(YOUTUBE_URL)
 kg_worker = KGWorker()
 try:
     neo4j_client = Neo4jClient.from_env()
+    try:
+        neo4j_client.ensure_constraints()
+        print("Neo4j constraints ensured.")
+    except Exception as exc:
+        print(f"Neo4j constraint setup skipped: {exc}")
     print("Neo4j client initialized.")
 except Exception as exc:
     neo4j_client = None
@@ -39,6 +47,13 @@ except Exception as exc:
 
 class ChatRequest(BaseModel):
     question: str
+
+class CrawlRequest(BaseModel):
+    keyword: str
+    limit: int = 5
+
+class LiveToggleRequest(BaseModel):
+    enabled: bool
 
 
 class ConnectionManager:
@@ -79,6 +94,7 @@ async def process_callback(data):
         "vietnamese_translation": data.get("vietnamese_translation", ""),
         "timestamp": data["timestamp"],
         "sentiment": "Positive" if data.get("sentiment_score", 0) > 0 else "Negative",
+        "keywords": data.get("keywords", []),
     }
 
     analytics = {
@@ -104,13 +120,15 @@ async def process_callback(data):
 # Global tasks
 stream_task: asyncio.Task | None = None
 kg_worker_task: asyncio.Task | None = None
+processing_enabled = True
 
 
 @app.on_event("startup")
 async def startup_event():
     global stream_task, kg_worker_task
     print("Starting Media Monitor Backend...")
-    stream_task = asyncio.create_task(processor.process_stream(process_callback))
+    if processing_enabled:
+        stream_task = asyncio.create_task(processor.process_stream(process_callback))
     print("Starting KG worker...")
     kg_worker_task = asyncio.create_task(kg_worker.run())
 
@@ -138,6 +156,61 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     """Endpoint cho chat voi Groq tu du lieu da thu thap."""
     result = await answer_question(request.question, db)
     return result
+
+
+@app.post("/crawl")
+async def crawl_news(request: CrawlRequest):
+    """Fetch recent news articles from NewsAPI for a given keyword."""
+    api_key = os.getenv("NEWSAPI_KEY") or os.getenv("NEWSAPI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="NEWSAPI_KEY not configured")
+
+    params = {
+        "q": request.keyword,
+        "language": "en",
+        "sortBy": "publishedAt",
+        "pageSize": min(max(request.limit, 1), 20),
+        "apiKey": api_key,
+    }
+
+    url = "https://newsapi.org/v2/everything"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        payload = resp.json()
+        articles = payload.get("articles", [])
+
+    # Normalize minimal fields for frontend
+    normalized = [
+        {
+          "title": a.get("title"),
+          "description": a.get("description"),
+          "url": a.get("url"),
+          "source": (a.get("source") or {}).get("name"),
+          "published_at": a.get("publishedAt"),
+        }
+        for a in articles
+    ]
+
+    # Optionally upsert into Neo4j as NewsItem nodes for later exploration
+    if neo4j_client:
+        for item in normalized:
+            # Merge by source when available, otherwise by URL/title
+            base_str = item.get("source") or item.get("url") or item.get("title") or str(datetime.now().timestamp())
+            news_hash = int(hashlib.md5(base_str.encode("utf-8")).hexdigest()[:16], 16)
+            try:
+                neo4j_client.upsert_kg_item(
+                    news_id=news_hash,
+                    kg_data={"entities": [], "events": [], "relations": []},
+                    source=item.get("source") or "NewsAPI",
+                    summary=item.get("title") or item.get("description") or "",
+                    timestamp=item.get("published_at"),
+                )
+            except Exception as exc:
+                print(f"Neo4j upsert error for crawled news: {exc}")
+
+    return {"count": len(normalized), "articles": normalized}
 
 
 @app.get("/kg/search")
@@ -191,3 +264,25 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+@app.post("/live/toggle")
+async def live_toggle(req: LiveToggleRequest):
+    """Toggle backend live processing (stream)."""
+    global processing_enabled, stream_task
+    if req.enabled == processing_enabled:
+        return {"enabled": processing_enabled}
+
+    if not req.enabled:
+        # Turn off
+        processing_enabled = False
+        processor.stop()
+        if stream_task:
+            stream_task.cancel()
+            stream_task = None
+        return {"enabled": False}
+
+    # Turn on: start stream_task if not running
+    processing_enabled = True
+    stream_task = asyncio.create_task(processor.process_stream(process_callback))
+    return {"enabled": True}
