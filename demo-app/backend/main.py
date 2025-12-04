@@ -87,14 +87,20 @@ def _background_upsert_crawled_news(articles):
     if not neo4j_client:
         return
 
-    for item in articles:
+    def _news_id_from_item(item: dict) -> int:
         base_str = (
             item.get("source")
             or item.get("url")
             or item.get("title")
             or str(datetime.now().timestamp())
         )
-        news_hash = int(hashlib.md5(base_str.encode("utf-8")).hexdigest()[:16], 16)
+        # Clamp to signed 63-bit to satisfy Neo4j integer range
+        raw = hashlib.md5(base_str.encode("utf-8")).digest()[:8]
+        hashed = int.from_bytes(raw, byteorder="big", signed=False) % (2**63 - 1)
+        return hashed or 1
+
+    for item in articles:
+        news_hash = _news_id_from_item(item)
         try:
             neo4j_client.upsert_kg_item(
                 news_id=news_hash,

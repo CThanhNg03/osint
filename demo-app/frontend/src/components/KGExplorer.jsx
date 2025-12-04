@@ -93,7 +93,8 @@ const KGExplorer = ({ externalTerms = [] }) => {
           },
         },
         NewsItem: {
-          caption: "",
+          label: "type",
+          caption: "type",
           [NEOVIS_ADVANCED_CONFIG]: {
             function: {
               title: (node) => node.properties?.summary?.slice(0, 120) || "NewsItem",
