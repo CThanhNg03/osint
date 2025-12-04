@@ -14,6 +14,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
   const [crawlLoading, setCrawlLoading] = useState(false);
   const [crawlError, setCrawlError] = useState("");
   const [crawlDisabled, setCrawlDisabled] = useState(false);
+  const [graphStatus, setGraphStatus] = useState("ready"); // ready | loading | empty
 
   const buildQuery = (termList) => {
     const cleaned = termList
@@ -48,6 +49,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
         vizRef.current.clearNetwork();
       } catch (e) {}
     }
+    setGraphStatus("loading");
 
     const url = import.meta.env.VITE_NEO4J_URI || "bolt://localhost:7687";
     const user = import.meta.env.VITE_NEO4J_USER || "neo4j";
@@ -159,6 +161,12 @@ const KGExplorer = ({ externalTerms = [] }) => {
       setRelatedNodes(neighbors);
     });
 
+    viz.registerOnEvent("completed", () => {
+      const nodesDs = viz._data?.nodes;
+      const nodesCount = nodesDs?.length || nodesDs?.getIds?.()?.length || 0;
+      setGraphStatus(nodesCount > 0 ? "ready" : "empty");
+    });
+
     viz.render();
     vizRef.current = viz;
   };
@@ -226,6 +234,16 @@ const KGExplorer = ({ externalTerms = [] }) => {
     renderGraph([]);
   };
 
+  const handleRemoveTerm = (termToRemove) => {
+    const updated = terms.filter((t) => t !== termToRemove);
+    setTerms(updated);
+    if (updated.length === 0) {
+      setSelectedNode(null);
+      setRelatedNodes([]);
+    }
+    renderGraph(updated);
+  };
+
   return (
     <div className="h-full w-full bg-gray-900 text-white p-4 overflow-hidden flex flex-col gap-4">
       <div className="flex items-center gap-3">
@@ -251,23 +269,36 @@ const KGExplorer = ({ externalTerms = [] }) => {
             Clear
           </button>
         </form>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           {terms.map((t) => (
-            <span
+            <button
               key={t}
-              className="px-2 py-1 text-xs bg-indigo-700 rounded border border-indigo-500"
+              type="button"
+              onClick={() => handleRemoveTerm(t)}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-700 rounded border border-indigo-500 hover:bg-indigo-600 transition"
             >
-              {t}
-            </span>
+              <span>{t}</span>
+              <span className="text-gray-200 hover:text-white" aria-hidden="true">
+                ×
+              </span>
+              <span className="sr-only">Remove {t}</span>
+            </button>
           ))}
         </div>
       </div>
       <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
-        <div
-          id="neo4j-vis"
-          ref={containerRef}
-          className="col-span-2 rounded-lg border border-gray-800 overflow-hidden bg-gray-800"
-        />
+        <div className="relative col-span-2 rounded-lg border border-gray-800 overflow-hidden bg-gray-800">
+          <div
+            id="neo4j-vis"
+            ref={containerRef}
+            className="absolute inset-0"
+          />
+          {graphStatus === "empty" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 text-gray-200 text-sm">
+              No results found for the current terms.
+            </div>
+          )}
+        </div>
         <div className="rounded-lg border border-gray-800 bg-gray-850 p-3 overflow-auto">
           <h3 className="text-sm font-semibold mb-2">Selection</h3>
           {!selectedNode && (
