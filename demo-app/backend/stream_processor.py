@@ -191,6 +191,8 @@ Return JSON only, no markdown.
                 )
                 if embed_text.strip():
                     embedding = generate_embedding(embed_text)
+                    if not embedding or len(embedding) != AnalysisLog.embedding.type.dimensions:
+                        embedding = None
             except Exception as embed_exc:
                 print(f"Embedding generation failed: {embed_exc}")
 
