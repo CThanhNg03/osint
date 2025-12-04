@@ -14,6 +14,7 @@ EMBEDDING_API_KEY = (
 )
 
 _client: OpenAI | None = None
+_embedding_unavailable = False  # Cache failure to avoid spamming connection errors
 
 
 def _get_client() -> OpenAI:
@@ -29,9 +30,19 @@ def generate_embedding(text: str) -> List[float]:
     """Generate a vector embedding against the configured OpenAI-compatible endpoint."""
     if not text or not text.strip():
         return []
-    client = _get_client()
-    response = client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=text,
-    )
-    return response.data[0].embedding
+    global _embedding_unavailable
+    if _embedding_unavailable:
+        return []
+
+    try:
+        client = _get_client()
+        response = client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=text,
+        )
+        return response.data[0].embedding
+    except Exception as exc:
+        # Cache the failure so we do not retry every frame and spam logs
+        _embedding_unavailable = True
+        print(f"Embedding generation disabled after error: {exc}")
+        return []

@@ -120,22 +120,46 @@ GUIDELINES:
 ANSWER:
 """
 
+    # Try up to 5 times with context
+    for attempt in range(5):
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=500,
+            )
+
+            answer = response.choices[0].message.content.strip()
+            return {
+                "answer": answer,
+                "context_used": len(vector_logs),
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            print(f"Groq Chat attempt {attempt + 1} failed: {e}")
+
+    # Final fallback: ask directly without context
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Trả lời ngắn gọn bằng tiếng Việt câu hỏi sau: {question}",
+                }
+            ],
             temperature=0.4,
-            max_tokens=500,
+            max_tokens=300,
         )
-
         answer = response.choices[0].message.content.strip()
         return {
             "answer": answer,
-            "context_used": len(vector_logs),
+            "context_used": 0,
             "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
-        print(f"Groq Chat Error: {e}")
+        print(f"Groq Chat fallback failed: {e}")
         return {
             "answer": "Xin loi, toi gap loi khi xu ly cau hoi. Vui long thu lai.",
             "context_used": 0,
