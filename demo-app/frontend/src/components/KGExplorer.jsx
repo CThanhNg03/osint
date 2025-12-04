@@ -14,7 +14,6 @@ const KGExplorer = ({ externalTerms = [] }) => {
   const [crawlLoading, setCrawlLoading] = useState(false);
   const [crawlError, setCrawlError] = useState("");
   const [crawlDisabled, setCrawlDisabled] = useState(false);
-  const [graphStatus, setGraphStatus] = useState("ready"); // ready | loading | empty
 
   const buildQuery = (termList) => {
     const cleaned = termList
@@ -49,7 +48,6 @@ const KGExplorer = ({ externalTerms = [] }) => {
         vizRef.current.clearNetwork();
       } catch (e) {}
     }
-    setGraphStatus("loading");
 
     const url = import.meta.env.VITE_NEO4J_URI || "bolt://localhost:7687";
     const user = import.meta.env.VITE_NEO4J_USER || "neo4j";
@@ -159,12 +157,6 @@ const KGExplorer = ({ externalTerms = [] }) => {
 
       setSelectedNode(selected);
       setRelatedNodes(neighbors);
-    });
-
-    viz.registerOnEvent("completed", () => {
-      const nodesDs = viz._data?.nodes;
-      const nodesCount = nodesDs?.length || nodesDs?.getIds?.()?.length || 0;
-      setGraphStatus(nodesCount > 0 ? "ready" : "empty");
     });
 
     viz.render();
@@ -279,7 +271,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
             >
               <span>{t}</span>
               <span className="text-gray-200 hover:text-white" aria-hidden="true">
-                ×
+                x
               </span>
               <span className="sr-only">Remove {t}</span>
             </button>
@@ -287,18 +279,11 @@ const KGExplorer = ({ externalTerms = [] }) => {
         </div>
       </div>
       <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
-        <div className="relative col-span-2 rounded-lg border border-gray-800 overflow-hidden bg-gray-800">
-          <div
-            id="neo4j-vis"
-            ref={containerRef}
-            className="absolute inset-0"
-          />
-          {graphStatus === "empty" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 text-gray-200 text-sm">
-              No results found for the current terms.
-            </div>
-          )}
-        </div>
+        <div
+          id="neo4j-vis"
+          ref={containerRef}
+          className="col-span-2 rounded-lg border border-gray-800 overflow-hidden bg-gray-800"
+        />
         <div className="rounded-lg border border-gray-800 bg-gray-850 p-3 overflow-auto">
           <h3 className="text-sm font-semibold mb-2">Selection</h3>
           {!selectedNode && (
