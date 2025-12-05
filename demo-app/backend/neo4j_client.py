@@ -36,7 +36,6 @@ class Neo4jClient:
         statements = [
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NewsItem) REQUIRE n.news_id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE",
-            "CREATE CONSTRAINT IF NOT EXISTS FOR (ev:Event) REQUIRE ev.event_id IS UNIQUE",
         ]
         with self.session() as session:
             for stmt in statements:
@@ -49,6 +48,7 @@ class Neo4jClient:
         source: Optional[str] = None,
         summary: Optional[str] = None,
         timestamp: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
     ) -> None:
         """Upsert NewsItem, Entity, Event nodes and their relationships."""
         if not kg_data:
@@ -57,6 +57,7 @@ class Neo4jClient:
         entities: List[Dict[str, Any]] = kg_data.get("entities") or []
         events: List[Dict[str, Any]] = kg_data.get("events") or []
         relations: List[Dict[str, Any]] = kg_data.get("relations") or []
+        keyword_entities = [k for k in (keywords or []) if (k or "").strip()]
 
         with self.session() as session:
             session.execute_write(
@@ -68,6 +69,7 @@ class Neo4jClient:
                 entities,
                 events,
                 relations,
+                keyword_entities,
             )
 
     @staticmethod
@@ -80,6 +82,7 @@ class Neo4jClient:
         entities: List[Dict[str, Any]],
         events: List[Dict[str, Any]],
         relations: List[Dict[str, Any]],
+        keyword_entities: List[str],
     ) -> None:
         tx.run(
             """
@@ -145,9 +148,23 @@ class Neo4jClient:
                     MERGE (e)-[:MENTIONED_IN]->(n)
                     """,
                     news_id=news_id,
-                    participant=participant,
-                    event_id=event_id,
-                )
+                participant=participant,
+                event_id=event_id,
+            )
+
+        for kw in keyword_entities:
+            kw_clean = (kw or "").strip()
+            if not kw_clean:
+                continue
+            tx.run(
+                """
+                MATCH (n:NewsItem {news_id: $news_id})
+                MERGE (k:Entity {name: $kw, type: "Keyword"})
+                MERGE (k)-[:MENTIONED_IN]->(n)
+                """,
+                news_id=news_id,
+                kw=kw_clean,
+            )
 
         for relation in relations:
             subject = relation.get("subject")

@@ -1,5 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+const resolveApiUrl = () => {
+    const envUrl = import.meta.env.VITE_API_URL;
+    if (envUrl) return envUrl.replace(/\/$/, '');
+    if (typeof window !== 'undefined') {
+        return `${window.location.protocol}//${window.location.host}`;
+    }
+    return 'http://localhost:8000';
+};
+
 const ChatPanel = () => {
     const [messages, setMessages] = useState([
         {
@@ -34,7 +43,7 @@ const ChatPanel = () => {
         setLoading(true);
 
         try {
-            const response = await fetch('http://localhost:8000/chat', {
+            const response = await fetch(`${resolveApiUrl()}/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ question: input })

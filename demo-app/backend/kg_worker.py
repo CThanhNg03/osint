@@ -69,6 +69,7 @@ class KGWorker:
                         source=log.source,
                         summary=log.summary,
                         timestamp=log.timestamp.isoformat() if log.timestamp else None,
+                        keywords=log.trending_keywords or [],
                     )
                     log.kg_status = "processed"
                     log.kg_processed_at = datetime.now(timezone.utc)

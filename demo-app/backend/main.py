@@ -82,10 +82,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _background_upsert_crawled_news(articles):
+def _background_upsert_crawled_news(articles, search_terms=None):
     """Push crawled articles into Neo4j after response returns."""
     if not neo4j_client:
         return
+    search_terms = [t.strip() for t in (search_terms or []) if (t or "").strip()]
 
     def _news_id_from_item(item: dict) -> int:
         base_str = (
@@ -108,6 +109,7 @@ def _background_upsert_crawled_news(articles):
                 source=item.get("source") or "NewsAPI",
                 summary=item.get("title") or item.get("description") or "",
                 timestamp=item.get("published_at"),
+                keywords=search_terms,
             )
         except Exception as exc:
             print(f"Neo4j upsert error for crawled news: {exc}")
@@ -226,7 +228,9 @@ async def crawl_news(request: CrawlRequest, background_tasks: BackgroundTasks):
 
     # Upsert into Neo4j in the background to keep the crawl response fast
     if neo4j_client and normalized:
-        background_tasks.add_task(_background_upsert_crawled_news, normalized)
+        # Also attach the searched keyword(s) as nodes for KG exploration
+        terms = [t.strip() for t in request.keyword.split(",")] if request.keyword else []
+        background_tasks.add_task(_background_upsert_crawled_news, normalized, terms)
 
     return {"count": len(normalized), "articles": normalized}
 

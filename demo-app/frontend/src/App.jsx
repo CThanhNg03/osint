@@ -9,6 +9,19 @@ import TranscriptPanel from './components/TranscriptPanel';
 import KGExplorer from './components/KGExplorer';
 
 function App() {
+  const resolveApiUrl = () => {
+    const envUrl = import.meta.env.VITE_API_URL;
+    if (envUrl) return envUrl.replace(/\/$/, '');
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}//${window.location.host}`;
+    }
+    if (typeof __VITE_API_URL_REQUIRED__ !== 'undefined' && __VITE_API_URL_REQUIRED__ === false) {
+      // Should not happen in build because we guard in vite.config, but keep fallback for dev
+      return 'http://localhost:8000';
+    }
+    throw new Error('VITE_API_URL is required at build time');
+  };
+
   const [news, setNews] = useState([]);
   const [analytics, setAnalytics] = useState({
     sentiment_score: 0,
@@ -22,10 +35,9 @@ function App() {
   const [processingEnabled, setProcessingEnabled] = useState(true);
   const ws = useRef(null);
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-  const wsUrl =
-    import.meta.env.VITE_WS_URL ||
-    apiUrl.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/monitor';
+  const apiUrl = resolveApiUrl();
+  const wsBase = (import.meta.env.VITE_WS_URL || apiUrl).replace(/^http/, 'ws').replace(/\/$/, '');
+  const wsUrl = `${wsBase}/ws/monitor`;
 
   useEffect(() => {
     ws.current = new WebSocket(wsUrl);
