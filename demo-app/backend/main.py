@@ -112,7 +112,17 @@ def _background_upsert_crawled_news(articles, search_terms=None):
                 keywords=search_terms,
             )
         except Exception as exc:
-            print(f"Neo4j upsert error for crawled news: {exc}")
+            # Include identifying info for easier debugging
+            print(
+                "Neo4j upsert error for crawled news",
+                {
+                    "error": str(exc),
+                    "news_id": news_hash,
+                    "title": item.get("title"),
+                    "source": item.get("source"),
+                    "url": item.get("url"),
+                },
+            )
 
 
 async def process_callback(data):

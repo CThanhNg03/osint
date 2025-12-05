@@ -15,6 +15,10 @@ const KGExplorer = ({ externalTerms = [] }) => {
   const [crawlError, setCrawlError] = useState("");
   const [crawlDisabled, setCrawlDisabled] = useState(false);
 
+  const handleRefreshGraph = () => {
+    renderGraph(terms);
+  };
+
   const buildQuery = (termList) => {
     const cleaned = termList
       .map((t) => (t || "").trim())
@@ -192,6 +196,8 @@ const KGExplorer = ({ externalTerms = [] }) => {
       }
       const data = await resp.json();
       setCrawlResults(data.articles || []);
+      // Re-render the graph to reflect freshly crawled items
+      renderGraph(terms);
     } catch (err) {
       setCrawlError(err.message || "Crawl failed");
       setCrawlResults([]);
@@ -267,6 +273,13 @@ const KGExplorer = ({ externalTerms = [] }) => {
             className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm border border-gray-700"
           >
             Clear
+          </button>
+          <button
+            type="button"
+            onClick={handleRefreshGraph}
+            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm border border-gray-700"
+          >
+            Refresh
           </button>
         </form>
         <div className="flex gap-2 items-center flex-wrap">
