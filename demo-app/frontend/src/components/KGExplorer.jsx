@@ -26,14 +26,14 @@ const KGExplorer = ({ externalTerms = [] }) => {
       };
     }
 
-    const clauses = cleaned.map(
-      (t) =>
-        `(
-          toLower(coalesce(n.name, n.summary, n.type, n.title, "")) CONTAINS toLower("${t.replace(/"/g, '\"')}") OR
-          toLower(coalesce(m.name, m.summary, m.type, m.title, "")) CONTAINS toLower("${t.replace(/"/g, '\"')}")
-        )`
-    );
-    const whereClause = clauses.join(" AND ");
+    const clauses = cleaned.map((t) => {
+      const term = t.replace(/"/g, '\\"');
+      return `(
+        toLower(coalesce(n.name, n.summary, n.type, n.title, "")) CONTAINS toLower("${term}") OR
+        toLower(coalesce(m.name, m.summary, m.type, m.title, "")) CONTAINS toLower("${term}")
+      )`;
+    });
+    const whereClause = clauses.join(" OR ");
     const cypher = `
       MATCH (n)-[r]-(m)
       WHERE ${whereClause}

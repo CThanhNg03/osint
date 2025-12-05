@@ -34,6 +34,7 @@ class Neo4jClient:
     def ensure_constraints(self) -> None:
         """Create uniqueness constraints to enable idempotent upserts."""
         statements = [
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Event) REQUIRE n.news_id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NewsItem) REQUIRE n.news_id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE",
         ]
