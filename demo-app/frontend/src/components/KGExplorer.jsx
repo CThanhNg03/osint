@@ -104,11 +104,15 @@ const KGExplorer = ({ externalTerms = [] }) => {
           caption: "type",
         },
         NewsItem: {
-          label: "type",
-          caption: "type",
+          label: "source",
+          caption: "source",
           [NEOVIS_ADVANCED_CONFIG]: {
             function: {
-              title: (node) => "News",
+              title: (node) =>
+                node.properties?.summary
+                  ? `${node.properties.summary.slice(0, 120)}`
+                  : node.properties?.title || "News",
+              subtitle: (node) => node.properties?.source || "",
             },
           },
         },
