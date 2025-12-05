@@ -26,26 +26,28 @@ const KGExplorer = ({ externalTerms = [] }) => {
 
     if (cleaned.length === 0) {
       return {
-        cypher: "MATCH (n)-[r]-(m) WITH DISTINCT n,r,m RETURN n,r,m LIMIT 25",
+        cypher: `
+          MATCH (n)-[r]-(m)
+          RETURN DISTINCT n,r,m
+          LIMIT 50
+        `,
+        params: {},
       };
     }
 
-    const clauses = cleaned.map((t) => {
-      const term = t.replace(/"/g, '\\"');
-      return `(
-        toLower(coalesce(n.name, n.summary, n.type, n.title, "")) CONTAINS toLower("${term}") OR
-        toLower(coalesce(m.name, m.summary, m.type, m.title, "")) CONTAINS toLower("${term}")
-      )`;
-    });
-    const whereClause = clauses.join(" OR ");
     const cypher = `
-      MATCH (n)-[r]-(m)
-      WHERE ${whereClause}
-      WITH DISTINCT n,r,m
-      RETURN n,r,m
-      LIMIT 50
+      UNWIND $terms AS term
+      MATCH (a)-[r1]-(b)
+      WHERE
+        toLower(coalesce(a.name, a.summary, a.type, a.title, "")) CONTAINS toLower(term)
+        OR toLower(coalesce(b.name, b.summary, b.type, b.title, "")) CONTAINS toLower(term)
+      WITH COLLECT(DISTINCT a) + COLLECT(DISTINCT b) AS seeds
+      UNWIND seeds AS seed
+      MATCH (seed)-[r2]-(nbr)
+      RETURN DISTINCT seed AS n, r2 AS r, nbr AS m
+      LIMIT 200
     `;
-    return { cypher };
+    return { cypher, params: { terms: cleaned } };
   };
 
   const renderGraph = (termList = terms) => {
@@ -60,7 +62,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
     const user = import.meta.env.VITE_NEO4J_USER || "neo4j";
     const password = import.meta.env.VITE_NEO4J_PASSWORD || "password";
 
-    const { cypher } = buildQuery(termList);
+    const { cypher, params } = buildQuery(termList);
     if (!cypher || cypher.trim().length === 0) return;
 
     const config = {
@@ -129,7 +131,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
         REPORTED_IN: { caption: true },
       },
       initialCypher: cypher,
-      parameters: {},
+      parameters: params || {},
     };
 
     const viz = new NeoVis(config);
