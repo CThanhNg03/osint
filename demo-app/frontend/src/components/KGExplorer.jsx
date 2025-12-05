@@ -31,23 +31,29 @@ const KGExplorer = ({ externalTerms = [] }) => {
           RETURN DISTINCT n,r,m
           LIMIT 50
         `,
-        params: {},
       };
     }
 
+    const clauses = cleaned.map((t) => {
+      const term = t.replace(/"/g, '\\"');
+      return `
+        toLower(coalesce(a.name, a.summary, a.type, a.title, "")) CONTAINS toLower("${term}")
+        OR toLower(coalesce(b.name, b.summary, b.type, b.title, "")) CONTAINS toLower("${term}")
+      `;
+    });
+
+    const whereClause = clauses.join(" OR ");
+
     const cypher = `
-      UNWIND $terms AS term
       MATCH (a)-[r1]-(b)
-      WHERE
-        toLower(coalesce(a.name, a.summary, a.type, a.title, "")) CONTAINS toLower(term)
-        OR toLower(coalesce(b.name, b.summary, b.type, b.title, "")) CONTAINS toLower(term)
+      WHERE ${whereClause}
       WITH COLLECT(DISTINCT a) + COLLECT(DISTINCT b) AS seeds
       UNWIND seeds AS seed
       MATCH (seed)-[r2]-(nbr)
       RETURN DISTINCT seed AS n, r2 AS r, nbr AS m
       LIMIT 200
     `;
-    return { cypher, params: { terms: cleaned } };
+    return { cypher };
   };
 
   const renderGraph = (termList = terms) => {
@@ -62,7 +68,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
     const user = import.meta.env.VITE_NEO4J_USER || "neo4j";
     const password = import.meta.env.VITE_NEO4J_PASSWORD || "password";
 
-    const { cypher, params } = buildQuery(termList);
+    const { cypher } = buildQuery(termList);
     if (!cypher || cypher.trim().length === 0) return;
 
     const config = {
@@ -131,7 +137,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
         REPORTED_IN: { caption: true },
       },
       initialCypher: cypher,
-      parameters: params || {},
+      parameters: {},
     };
 
     const viz = new NeoVis(config);
