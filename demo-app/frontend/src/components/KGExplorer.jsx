@@ -28,11 +28,14 @@ const KGExplorer = ({ externalTerms = [] }) => {
 
     const clauses = cleaned.map(
       (t) =>
-        `toLower(coalesce(n.name, n.summary, n.type, "")) CONTAINS toLower("${t.replace(/"/g, '\"')}")`
+        `(
+          toLower(coalesce(n.name, n.summary, n.type, n.title, "")) CONTAINS toLower("${t.replace(/"/g, '\"')}") OR
+          toLower(coalesce(m.name, m.summary, m.type, m.title, "")) CONTAINS toLower("${t.replace(/"/g, '\"')}")
+        )`
     );
     const whereClause = clauses.join(" AND ");
     const cypher = `
-      MATCH (n:Entity)-[r]-(m)
+      MATCH (n)-[r]-(m)
       WHERE ${whereClause}
       WITH DISTINCT n,r,m
       RETURN n,r,m
@@ -92,12 +95,16 @@ const KGExplorer = ({ externalTerms = [] }) => {
             },
           },
         },
+        Keyword: {
+          label: "name",
+          caption: "type",
+        },
         NewsItem: {
           label: "type",
           caption: "type",
           [NEOVIS_ADVANCED_CONFIG]: {
             function: {
-              title: (node) => node.properties?.summary?.slice(0, 120) || "NewsItem",
+              title: (node) => "News",
             },
           },
         },

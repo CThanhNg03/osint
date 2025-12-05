@@ -159,7 +159,9 @@ class Neo4jClient:
             tx.run(
                 """
                 MATCH (n:NewsItem {news_id: $news_id})
-                MERGE (k:Entity {name: $kw, type: "Keyword"})
+                MERGE (k:Entity:Keyword {name: $kw})
+                ON CREATE SET k.type = "Keyword"
+                ON MATCH SET k.type = coalesce(k.type, "Keyword")
                 MERGE (k)-[:MENTIONED_IN]->(n)
                 """,
                 news_id=news_id,
