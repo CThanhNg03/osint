@@ -27,9 +27,12 @@ const KGExplorer = ({ externalTerms = [] }) => {
     if (cleaned.length === 0) {
       return {
         cypher: `
-          MATCH (n)-[r]-(m)
-          RETURN DISTINCT n,r,m
-          LIMIT 50
+          MATCH (e:Entity)-[r]-(n:NewsItem)
+          WITH e,r,n
+          ORDER BY n.timestamp DESC
+          WITH collect(distinct {e:e, r:r, n:n}) AS rows
+          UNWIND rows[0..9] AS row
+          RETURN row.e AS n, row.r AS r, row.n AS m
         `,
       };
     }
@@ -37,21 +40,20 @@ const KGExplorer = ({ externalTerms = [] }) => {
     const clauses = cleaned.map((t) => {
       const term = t.replace(/"/g, '\\"');
       return `
-        toLower(coalesce(a.name, a.summary, a.type, a.title, "")) CONTAINS toLower("${term}")
-        OR toLower(coalesce(b.name, b.summary, b.type, b.title, "")) CONTAINS toLower("${term}")
+        toLower(coalesce(e.name, e.summary, e.type, e.title, "")) CONTAINS toLower("${term}")
       `;
     });
 
     const whereClause = clauses.join(" OR ");
 
     const cypher = `
-      MATCH (a)-[r1]-(b)
+      MATCH (e:Entity)-[r]-(n:NewsItem)
       WHERE ${whereClause}
-      WITH COLLECT(DISTINCT a) + COLLECT(DISTINCT b) AS seeds
-      UNWIND seeds AS seed
-      MATCH (seed)-[r2]-(nbr)
-      RETURN DISTINCT seed AS n, r2 AS r, nbr AS m
-      LIMIT 200
+      WITH e,r,n
+      ORDER BY n.timestamp DESC
+      WITH collect(distinct {e:e, r:r, n:n}) AS rows
+      UNWIND rows[0..9] AS row
+      RETURN row.e AS n, row.r AS r, row.n AS m
     `;
     return { cypher };
   };
