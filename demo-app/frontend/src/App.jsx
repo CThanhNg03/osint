@@ -45,8 +45,11 @@ function App() {
   const ws = useRef(null);
 
   const apiUrl = resolveApiUrl();
-  const wsBase = (import.meta.env.VITE_WS_URL || apiUrl).replace(/^http/, 'ws').replace(/\/$/, '');
-  const wsUrl = `${wsBase}/ws/monitor`;
+  const rawWs = import.meta.env.VITE_WS_URL || apiUrl;
+  const wsBaseNormalized = rawWs.replace(/^http/, 'ws');
+  const hasPath = /\/ws\/monitor\/?$/.test(wsBaseNormalized);
+  const wsBase = wsBaseNormalized.replace(/\/$/, '');
+  const wsUrl = hasPath ? wsBase : `${wsBase}/ws/monitor`;
 
   // Fetch initial live state from backend
   useEffect(() => {
