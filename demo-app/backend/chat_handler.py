@@ -1,17 +1,22 @@
 ﻿import os
 from datetime import datetime, timedelta
 
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from embedding_utils import generate_embedding
 from models import AnalysisLog
 
-# Configure Groq / OpenAI-compatible client
-client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
-)
+TEST_MODE = os.getenv("TEST_MODE") == "1"
+
+if not TEST_MODE:
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.getenv("GROQ_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+    )
+else:
+    client = None
 
 
 def _prepare_text_for_embedding(log: AnalysisLog) -> str:
@@ -119,6 +124,13 @@ GUIDELINES:
 
 ANSWER:
 """
+
+    if TEST_MODE:
+        return {
+            "answer": "Test response (no LLM in TEST_MODE)",
+            "context_used": len(vector_logs),
+            "timestamp": datetime.now().isoformat(),
+        }
 
     # Try up to 5 times with context
     for attempt in range(5):

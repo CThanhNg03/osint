@@ -24,3 +24,16 @@ body,
   min-height: 100vh;
   background: #0f172a;
 }
+
+@keyframes marquee {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-marquee-slow {
+  animation: marquee 35s linear infinite;
+}

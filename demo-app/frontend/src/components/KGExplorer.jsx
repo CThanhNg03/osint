@@ -3,7 +3,7 @@ import NeoVis, { NEOVIS_ADVANCED_CONFIG } from "neovis.js";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const KGExplorer = ({ externalTerms = [] }) => {
+const KGExplorer = ({ externalTerms = [], externalCypher = null, externalMode = null }) => {
   const containerRef = useRef(null);
   const vizRef = useRef(null);
   const [terms, setTerms] = useState([]);
@@ -14,6 +14,13 @@ const KGExplorer = ({ externalTerms = [] }) => {
   const [crawlLoading, setCrawlLoading] = useState(false);
   const [crawlError, setCrawlError] = useState("");
   const [crawlDisabled, setCrawlDisabled] = useState(false);
+  const [crawlSource, setCrawlSource] = useState("news");
+  const [country, setCountry] = useState("kh");
+  const [sourceId, setSourceId] = useState("");
+  const [sources, setSources] = useState([]);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [sourcesError, setSourcesError] = useState("");
+  const [mode, setMode] = useState("person"); // person | entity
 
   const handleRefreshGraph = () => {
     renderGraph(terms);
@@ -58,7 +65,7 @@ const KGExplorer = ({ externalTerms = [] }) => {
     return { cypher };
   };
 
-  const renderGraph = (termList = terms) => {
+ const renderGraph = (termList = terms, cypherOverride = null) => {
     if (!containerRef.current) return;
     if (vizRef.current) {
       try {
@@ -70,8 +77,42 @@ const KGExplorer = ({ externalTerms = [] }) => {
     const user = import.meta.env.VITE_NEO4J_USER || "neo4j";
     const password = import.meta.env.VITE_NEO4J_PASSWORD || "password";
 
-    const { cypher } = buildQuery(termList);
+    let cypher = cypherOverride;
+    if (!cypher) {
+      if (mode === "person") {
+        const nameFilter =
+          termList && termList.length > 0
+            ? `WHERE toLower(p.name) CONTAINS toLower("${termList[0].replace(/"/g, '\\"')}")`
+            : "";
+        cypher = `
+          MATCH (p:Person)
+          ${nameFilter}
+          OPTIONAL MATCH (p)-[r1:POSTED]->(po:Post)
+          WITH p, po, r1 LIMIT 5
+          OPTIONAL MATCH (po)<-[r2:COMMENTED_ON]-(a:Account)
+          WITH p, po, r1, r2, a LIMIT 5
+          RETURN p, po, r1, r2, a
+        `;
+      } else {
+        // entity/news mode: entities connected to NewsItem
+        const kwFilter =
+          termList && termList.length > 0
+            ? `WHERE toLower(coalesce(e.name,'')) CONTAINS toLower("${termList[0].replace(/"/g, '\\"')}")`
+            : "";
+        cypher = `
+          MATCH (e:Entity)-[r]-(n:NewsItem)
+          ${kwFilter}
+          WITH e, r, n
+          ORDER BY n.timestamp DESC
+          WITH collect(distinct {e:e, r:r, n:n}) AS rows
+          UNWIND rows[0..9] AS row
+          RETURN row.e AS n, row.r AS r, row.n AS m
+        `;
+      }
+    }
     if (!cypher || cypher.trim().length === 0) return;
+    // Log the cypher used to render the graph for debugging/inspection
+    console.log("[KGExplorer] Running cypher:", cypher);
 
     const config = {
       containerId: "neo4j-vis",
@@ -92,6 +133,32 @@ const KGExplorer = ({ externalTerms = [] }) => {
         Person: {
           label: "name",
           caption: "name",
+        },
+        Account: {
+          label: "name",
+          caption: "handle",
+          [NEOVIS_ADVANCED_CONFIG]: {
+            function: {
+              title: (node) =>
+                node.properties?.handle || node.properties?.name || "Account",
+              subtitle: (node) => node.properties?.display_name || "",
+            },
+          },
+        },
+        Post: {
+          label: "caption",
+          caption: "source",
+          [NEOVIS_ADVANCED_CONFIG]: {
+            function: {
+              title: (node) =>
+                node.properties?.caption ||
+                (node.properties?.text
+                  ? node.properties.text.slice(0, 80)
+                  : "Post"),
+              subtitle: (node) =>
+                node.properties?.source || node.properties?.timestamp || "",
+            },
+          },
         },
         Organization: {
           label: "name",
@@ -199,7 +266,13 @@ const KGExplorer = ({ externalTerms = [] }) => {
       const resp = await fetch(`${API_URL}/crawl`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword, limit: 5 }),
+        body: JSON.stringify({
+          keyword,
+          limit: 5,
+          source_type: crawlSource,
+          country: country || undefined,
+          source_id: sourceId || undefined,
+        }),
       });
       if (!resp.ok) {
             if (resp.status === 429) {
@@ -209,7 +282,14 @@ const KGExplorer = ({ externalTerms = [] }) => {
         throw new Error(`HTTP ${resp.status}`);
       }
       const data = await resp.json();
-      setCrawlResults(data.articles || []);
+      const combined = [];
+      if (data?.news?.items) {
+        combined.push(...data.news.items.map((item) => ({ ...item, type: "news" })));
+      }
+      if (data?.social?.items) {
+        combined.push(...data.social.items.map((item) => ({ ...item, type: "social" })));
+      }
+      setCrawlResults(combined);
       // Re-render the graph to reflect freshly crawled items
       renderGraph(terms);
     } catch (err) {
@@ -220,13 +300,30 @@ const KGExplorer = ({ externalTerms = [] }) => {
     }
   };
 
+  const loadSources = async (countryCode) => {
+    setSourcesLoading(true);
+    setSourcesError("");
+    try {
+      const resp = await fetch(`${API_URL}/news/sources?country=${countryCode || "kh"}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setSources(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setSourcesError(err.message || "Failed to load sources");
+      setSources([]);
+    } finally {
+      setSourcesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (externalTerms && externalTerms.length > 0) {
       setTerms(externalTerms);
-      renderGraph(externalTerms);
-      return;
+      renderGraph(externalTerms, externalCypher);
+    } else {
+      renderGraph([], externalCypher);
     }
-    renderGraph([]);
+    loadSources(country);
     return () => {
       if (vizRef.current) {
         try {
@@ -234,7 +331,20 @@ const KGExplorer = ({ externalTerms = [] }) => {
         } catch (e) {}
       }
     };
-  }, []);
+  }, [externalTerms, externalCypher]);
+
+  // Keep mode in sync with external requests (e.g., jump in as News/Entities)
+  useEffect(() => {
+    if (externalMode && externalMode !== mode) {
+      setMode(externalMode);
+      renderGraph(terms, externalCypher);
+    }
+  }, [externalMode]);
+
+  // Refresh graph when mode switches locally
+  useEffect(() => {
+    renderGraph(terms, externalCypher);
+  }, [mode]);
 
   const handleAddTerm = (e) => {
     e.preventDefault();
@@ -268,6 +378,20 @@ const KGExplorer = ({ externalTerms = [] }) => {
     <div className="h-full w-full bg-gray-900 text-white p-4 overflow-hidden flex flex-col gap-4">
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-semibold">Knowledge Graph Explorer</h2>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400">Mode:</label>
+          <select
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value);
+              renderGraph(terms);
+            }}
+            className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1"
+          >
+            <option value="person">Person / Social</option>
+            <option value="entity">News / Entities</option>
+          </select>
+        </div>
         <form onSubmit={handleAddTerm} className="flex gap-2 items-center">
           <input
             value={newTerm}
@@ -320,86 +444,155 @@ const KGExplorer = ({ externalTerms = [] }) => {
           className="col-span-2 rounded-lg border border-gray-800 overflow-hidden bg-gray-800"
         />
         <div className="rounded-lg border border-gray-800 bg-gray-850 p-3 overflow-auto">
-          <h3 className="text-sm font-semibold mb-2">Selection</h3>
-          {!selectedNode && (
-            <div className="text-gray-400 text-sm">Click a node to view details.</div>
-          )}
-          {selectedNode && (
-            <div className="space-y-2 text-sm">
-              <div>
-                <div className="text-gray-400">ID</div>
-                <div className="font-semibold">{selectedNode.id}</div>
-              </div>
-              <div>
-                <div className="text-gray-400">Label</div>
-                <div className="font-semibold">{selectedNode.label || selectedNode.group || "Node"}</div>
-              </div>
-              <div>
-                <div className="text-gray-400">Caption</div>
-                <div className="font-semibold">
-                  {selectedNode.title || selectedNode.caption || selectedNode.properties?.name || "N/A"}
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold">Crawl related news</h4>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={crawlSource}
+                    onChange={(e) => setCrawlSource(e.target.value)}
+                    className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1"
+                  >
+                    <option value="news">News</option>
+                    <option value="social">Social (X)</option>
+                    <option value="both">Both</option>
+                  </select>
+                  <button
+                    onClick={handleCrawl}
+                    disabled={crawlLoading || terms.length === 0 || crawlDisabled}
+                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-semibold disabled:opacity-50"
+                  >
+                    {crawlDisabled ? "Paused (429)" : crawlLoading ? "Fetching..." : "Crawl"}
+                  </button>
                 </div>
               </div>
-              <div>
-                <div className="text-gray-400">Properties</div>
-                <pre className="bg-gray-900 rounded p-2 text-xs text-gray-300 whitespace-pre-wrap break-words">
-                  {JSON.stringify(selectedNode.properties || {}, null, 2)}
-                </pre>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex flex-col text-xs text-gray-300">
+                  <label className="text-gray-400 mb-1">Country</label>
+                  <select
+                    value={country}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCountry(val);
+                      loadSources(val || "kh");
+                    }}
+                    className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs w-28"
+                  >
+                    <option value="vi">Vietnam</option>
+                    <option value="kh">Cambodia</option>
+                    <option value="en">English</option>
+                    <option value="th">Thai</option>
+                  </select>
+                </div>
+                <div className="flex-1 flex flex-col text-xs text-gray-300">
+                  <label className="text-gray-400 mb-1">Source</label>
+                  <select
+                    value={sourceId}
+                    onChange={(e) => setSourceId(e.target.value)}
+                    className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs"
+                  >
+                    <option value="">Any</option>
+                    {sources.map((s) => (
+                      <option key={s.id || s.source_id} value={s.id || s.source_id}>
+                        {s.name || s.source_id || s.id}
+                      </option>
+                    ))}
+                  </select>
+                  {sourcesError && <span className="text-red-400 text-[11px] mt-1">{sourcesError}</span>}
+                </div>
               </div>
-              <div>
-                <div className="text-gray-400 mb-1">Related Nodes</div>
-                <div className="space-y-1">
-                  {relatedNodes.length === 0 && (
-                    <div className="text-gray-500 text-xs">None</div>
-                  )}
-                  {relatedNodes.map((n) => (
-                    <div
-                      key={n.id}
-                      className="p-2 rounded bg-gray-900 border border-gray-800 text-xs"
-                    >
-                      <div className="font-semibold">{n.properties?.name || n.label || n.id}</div>
-                      <div className="text-gray-400">
-                        {n.properties?.type || n.group || "Node"}
-                      </div>
+              {crawlError && <div className="text-red-400 text-xs mb-2">{crawlError}</div>}
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {crawlResults.length === 0 && !crawlLoading && (
+                  <div className="text-gray-500 text-xs">No results yet.</div>
+                )}
+                {crawlResults.map((a, idx) => (
+                  <a
+                    key={idx}
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block p-2 bg-gray-900 border border-gray-800 rounded hover:border-indigo-500 transition"
+                  >
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>{a.source}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] uppercase font-semibold ${
+                          a.type === "social"
+                            ? "bg-purple-900/40 text-purple-200"
+                            : "bg-blue-900/40 text-blue-200"
+                        }`}
+                      >
+                        {a.type === "social" ? "Social" : "News"}
+                      </span>
                     </div>
-                  ))}
-                </div>
+                    <div className="text-sm font-semibold text-white line-clamp-2">
+                      {a.title}
+                    </div>
+                    {a.description && (
+                      <div className="text-xs text-gray-400 line-clamp-2">
+                        {a.description}
+                      </div>
+                    )}
+                    {a.vietnamese_translation && (
+                      <div className="text-xs text-yellow-200 mt-1 line-clamp-2">
+                        VN: {a.vietnamese_translation}
+                      </div>
+                    )}
+                  </a>
+                ))}
               </div>
             </div>
-          )}
-          <div className="mt-4">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-semibold">Crawl related news</h4>
-              <button
-                onClick={handleCrawl}
-                disabled={crawlLoading || terms.length === 0 || crawlDisabled}
-                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-semibold disabled:opacity-50"
-              >
-                {crawlDisabled ? "Paused (429)" : crawlLoading ? "Fetching..." : "Crawl"}
-              </button>
-            </div>
-            {crawlError && <div className="text-red-400 text-xs mb-2">{crawlError}</div>}
-            <div className="space-y-2 max-h-48 overflow-auto">
-              {crawlResults.length === 0 && !crawlLoading && (
-                <div className="text-gray-500 text-xs">No results yet.</div>
+
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Selection</h3>
+              {!selectedNode && (
+                <div className="text-gray-400 text-sm">Click a node to view details.</div>
               )}
-              {crawlResults.map((a, idx) => (
-                <a
-                  key={idx}
-                  href={a.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block p-2 bg-gray-900 border border-gray-800 rounded hover:border-indigo-500 transition"
-                >
-                  <div className="text-xs text-gray-400">{a.source}</div>
-                  <div className="text-sm font-semibold text-white line-clamp-2">
-                    {a.title}
+              {selectedNode && (
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <div className="text-gray-400">ID</div>
+                    <div className="font-semibold">{selectedNode.id}</div>
                   </div>
-                  <div className="text-xs text-gray-400 line-clamp-2">
-                    {a.description}
+                    <div>
+                      <div className="text-gray-400">Label</div>
+                      <div className="font-semibold">{selectedNode.label || selectedNode.group || "Node"}</div>
+                    </div>
+                  <div>
+                    <div className="text-gray-400">Caption</div>
+                    <div className="font-semibold">
+                      {selectedNode.title || selectedNode.caption || selectedNode.properties?.name || "N/A"}
+                    </div>
                   </div>
-                </a>
-              ))}
+                  <div>
+                    <div className="text-gray-400">Properties</div>
+                    <pre className="bg-gray-900 rounded p-2 text-xs text-gray-300 whitespace-pre-wrap break-words">
+                      {JSON.stringify(selectedNode.properties || {}, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="text-gray-400 mb-1">Related Nodes</div>
+                    <div className="space-y-1">
+                      {relatedNodes.length === 0 && (
+                        <div className="text-gray-500 text-xs">None</div>
+                      )}
+                      {relatedNodes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="p-2 rounded bg-gray-900 border border-gray-800 text-xs"
+                        >
+                          <div className="font-semibold">{n.properties?.name || n.label || n.id}</div>
+                          <div className="text-gray-400">
+                            {n.properties?.type || n.group || "Node"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

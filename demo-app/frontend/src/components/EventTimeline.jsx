@@ -4,7 +4,7 @@ const EventTimeline = ({ events, onEventClick }) => {
   if (!events || events.length === 0) {
     return (
       <div className="p-4 text-gray-500 text-sm text-center">
-        Đang chờ dữ liệu phân tích...
+        Waiting for live events...
       </div>
     );
   }
@@ -30,7 +30,9 @@ const EventTimeline = ({ events, onEventClick }) => {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-white text-sm font-medium">{event.title}</p>
-                <p className="text-gray-400 text-xs mt-1 line-clamp-2">{event.summary}</p>
+                <p className="text-gray-400 text-xs mt-1 line-clamp-2">
+                  {event.summary || event.english_summary || event.ocr_text || '—'}
+                </p>
               </div>
               <span
                 className={`text-xs px-2 py-0.5 rounded ${
@@ -41,14 +43,14 @@ const EventTimeline = ({ events, onEventClick }) => {
                     : 'bg-gray-800 text-gray-400'
                 }`}
               >
-                {event.sentiment}
+                {event.sentiment || 'Neutral'}
               </span>
             </div>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-xs text-gray-500">
-                {new Date(event.timestamp).toLocaleTimeString('vi-VN')}
+                {event.timestamp ? new Date(event.timestamp).toLocaleTimeString('vi-VN') : '--:--'}
               </span>
-              <span className="text-xs text-blue-400">• {event.source}</span>
+              <span className="text-xs text-blue-400">Source: {event.source || 'Live'}</span>
             </div>
           </button>
         ))}

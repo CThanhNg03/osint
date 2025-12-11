@@ -1,9 +1,9 @@
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from openai import OpenAI
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 from database import SessionLocal
 from kg_extractor import extract_kg_for_log
@@ -18,6 +18,7 @@ class KGWorker:
         self.poll_interval = poll_interval
         self.batch_size = batch_size
         self._stop_event = asyncio.Event()
+        self._neo4j_backoff_until: datetime | None = None
 
         api_key = os.getenv("GROQ_API_KEY")
         if api_key:
@@ -45,21 +46,46 @@ class KGWorker:
                 continue
 
     async def process_pending_logs(self):
-        if not self._neo4j_client or not self.client:
-            # Skip work if Neo4j or LLM client is not configured; keep loop alive.
+        if not self.client:
+            # Skip work if LLM client is not configured; keep loop alive.
             return
+
+        now = datetime.now(timezone.utc)
+        retry_cutoff = now - timedelta(minutes=30)
+        neo4j_available = self._neo4j_client and (not self._neo4j_backoff_until or now >= self._neo4j_backoff_until)
 
         db = SessionLocal()
         try:
             pending_logs = (
                 db.query(AnalysisLog)
-                .filter(or_(AnalysisLog.kg_status == None, AnalysisLog.kg_status == "pending"))  # noqa: E711
+                .filter(
+                    or_(
+                        AnalysisLog.kg_status == None,  # noqa: E711
+                        AnalysisLog.kg_status == "pending",
+                        and_(
+                            AnalysisLog.kg_status == "failed",
+                            or_(
+                                AnalysisLog.kg_processed_at == None,  # noqa: E711
+                                AnalysisLog.kg_processed_at <= retry_cutoff,
+                            ),
+                        ),
+                    )
+                )
                 .order_by(AnalysisLog.timestamp.asc())
                 .limit(self.batch_size)
                 .all()
             )
 
             for log in pending_logs:
+                attempted_at = datetime.now(timezone.utc)
+
+                if not neo4j_available:
+                    log.kg_status = "failed"
+                    log.kg_processed_at = attempted_at
+                    db.add(log)
+                    db.commit()
+                    continue
+
                 try:
                     kg_data = await extract_kg_for_log(log, self.client)
                     log.kg_raw = kg_data
@@ -72,10 +98,17 @@ class KGWorker:
                         keywords=log.trending_keywords or [],
                     )
                     log.kg_status = "processed"
-                    log.kg_processed_at = datetime.now(timezone.utc)
+                    log.kg_processed_at = attempted_at
                 except Exception as exc:
                     log.kg_status = "failed"
-                    print(f"[KGWorker] Failed to process log {log.id}: {exc}")
+                    log.kg_processed_at = attempted_at
+                    # Back off Neo4j writes for 30m to avoid noisy retries when the DB is down
+                    self._neo4j_backoff_until = attempted_at + timedelta(minutes=30)
+                    neo4j_available = False
+                    print(
+                        f"[KGWorker] Failed to process log {log.id}: {exc}. "
+                        f"Will retry after {self._neo4j_backoff_until.isoformat()}."
+                    )
                 finally:
                     db.add(log)
                     db.commit()

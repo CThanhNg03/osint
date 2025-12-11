@@ -1,9 +1,10 @@
 import React from 'react';
 
-const Header = ({ view, onChangeView, processingEnabled, onToggleProcessing }) => {
+const Header = ({ view, onChangeView, processingEnabled, togglingLive = false, onToggleProcessing }) => {
   const baseBtn = 'px-3 py-1 rounded border';
   const active = 'bg-indigo-600 border-indigo-500 text-white';
   const inactive = 'bg-gray-800 border-gray-700 text-gray-200';
+  const toggleDisabled = togglingLive;
 
   return (
     <header className="bg-gray-900 border-b border-gray-800 p-4 flex justify-between items-center">
@@ -27,14 +28,21 @@ const Header = ({ view, onChangeView, processingEnabled, onToggleProcessing }) =
           KG Explorer
         </button>
         <button
-          className={`${baseBtn} ${
+          className={`${baseBtn} ${view === 'people' ? active : inactive}`}
+          onClick={() => onChangeView('people')}
+        >
+          People DB
+        </button>
+        <button
+          className={`${baseBtn} ${toggleDisabled ? 'opacity-60 cursor-not-allowed' : ''} ${
             processingEnabled
               ? 'bg-emerald-600 border-emerald-500 text-white'
               : 'bg-gray-800 border-gray-700 text-gray-300'
           }`}
+          disabled={toggleDisabled}
           onClick={onToggleProcessing}
         >
-          {processingEnabled ? 'Live On' : 'Live Off'}
+          {toggleDisabled ? 'Updating...' : processingEnabled ? 'Live On' : 'Live Off'}
         </button>
         <div className="px-3 py-1 bg-gray-800 rounded border border-gray-700 text-gray-400">
           <span className="text-green-500">●</span> SYSTEM ONLINE

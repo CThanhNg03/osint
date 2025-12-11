@@ -116,6 +116,9 @@ class Neo4jClient:
 
         for idx, event in enumerate(events):
             event_id = event.get("event_id") or event.get("id") or f"event-{news_id}-{idx}"
+            # Make event ids globally unique to avoid constraint collisions
+            if not str(event_id).startswith(f"{news_id}-"):
+                event_id = f"{news_id}-{event_id}"
             ev_type = event.get("type") or "Event"
             ev_time = event.get("time")
             ev_location = event.get("location")

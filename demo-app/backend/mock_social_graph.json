@@ -1,0 +1,18 @@
+{
+  "source": "mock",
+  "person_name": "Sample Person",
+  "accounts": [
+    { "id": "acct1", "handle": "@sample_news", "display_name": "Sample News Account" },
+    { "id": "acct2", "handle": "@sample_friend", "display_name": "Friend of Sample" }
+  ],
+  "posts": [
+    { "id": "post1", "account_id": "acct1", "text": "Breaking: Sample Person featured in a new report.", "timestamp": "2025-12-01T10:00:00Z" },
+    { "id": "post2", "account_id": "acct2", "text": "Great discussion with Sample Person about regional news.", "timestamp": "2025-12-01T12:30:00Z" }
+  ],
+  "edges": [
+    { "source": "person", "target": "acct1", "type": "mentioned_in" },
+    { "source": "person", "target": "acct2", "type": "engaged_with" },
+    { "source": "acct2", "target": "acct1", "type": "replied_to", "post_id": "post1" }
+  ],
+  "mock": true
+}

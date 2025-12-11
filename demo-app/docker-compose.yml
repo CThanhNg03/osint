@@ -1,8 +1,9 @@
 version: '3.8'
 
 services:
-  backend:
+  api:
     build: ./backend
+    command: ["uvicorn", "api_gateway:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
     volumes:
@@ -12,11 +13,13 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://user:password@db:5432/mediamonitor
-      - EMBEDDING_BASE_URL=http://embedding:8080/v1
-      - EMBEDDING_API_KEY=localai
+      - EMBEDDING_BASE_URL=http://embedding:11434/v1
+      - EMBEDDING_API_KEY=ollama
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
       - embedding
+      - redis
 
   frontend:
     build: ./frontend
@@ -28,7 +31,8 @@ services:
     environment:
       - VITE_API_URL=http://localhost:8000
     depends_on:
-      - backend
+      - api
+      - redis
 
   db:
     image: ankane/pgvector:latest
@@ -52,6 +56,50 @@ services:
       - OLLAMA_HOST=0.0.0.0
     command: serve
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  ingestor:
+    build: ./backend
+    command: ["python", "ingestor_service.py"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  person-service:
+    build: ./backend
+    command: ["python", "person_service.py"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://user:password@db:5432/mediamonitor
+      - IMAGE_STORE_PATH=/data/images
+      - PERSON_SERVICE_PORT=8001
+    volumes:
+      - ./backend:/app
+      - person_images:/data/images
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   ollama_data:
+  redis_data:
+  person_images:
