@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build: ./backend
@@ -37,7 +35,7 @@ services:
   db:
     image: ankane/pgvector:latest
     ports:
-      - "5432:5432"
+      - "5432"
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
@@ -49,7 +47,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama-embed
     ports:
-      - "11434:11434"
+      - "11434"
     volumes:
       - ollama_data:/root/.ollama
     environment:
@@ -59,7 +57,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6379"
     volumes:
       - redis_data:/data
 
