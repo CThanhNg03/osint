@@ -144,8 +144,11 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
     setStatusMsg('Crawling social/KG...');
     setError('');
     try {
+      const gateway =
+        import.meta.env.VITE_API_URL?.replace(/\/$/, '') ||
+        `${window.location.protocol}//${window.location.host}`;
       const resp = await fetch(
-        `${import.meta.env.VITE_API_URL?.replace(/\/$/, '') || `${window.location.protocol}//${window.location.host}`}/people/social/crawl?person_id=${encodeURIComponent(personInfo.id || '')}`,
+        `${gateway}/people/social/crawl?person_id=${encodeURIComponent(personInfo.id || '')}`,
         { method: 'POST' }
       );
       const data = await resp.json();
@@ -157,10 +160,18 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
         setSelectedAccount(primaryAcc);
         setStatusMsg(`Using X account ${primaryAcc.handle || primaryAcc.display_name || primaryAcc.id}`);
       }
+      const fallbackCypher = `
+        MATCH (p:Person)
+        WHERE toLower(p.name) = toLower("${(personInfo.name || '').replace(/"/g, '\\"')}")
+        OPTIONAL MATCH (p)-[r1:POSTED]->(po:Post)
+        OPTIONAL MATCH (po)<-[r2:COMMENTED_ON]-(a:Account)
+        RETURN p, po, r1, r2, a
+        LIMIT 200
+      `;
       onExploreKG?.({
         ...personInfo,
         social_graph: data.social_graph,
-        cypher: data.cypher,
+        cypher: data.cypher || fallbackCypher,
         message: data.message,
       });
     } catch (err) {

@@ -287,19 +287,17 @@ function App() {
                 if (!person?.name) return;
                 const name = person.name;
                 setKgTerms([name]);
-                if (person.cypher) {
-                  setKgCypher(person.cypher);
-                } else {
-                  const escaped = name.replace(/"/g, '\\"');
-                  const cypher = `
-                    MATCH (n:Person)
-                    WHERE toLower(n.name) = toLower("${escaped}")
-                    OPTIONAL MATCH (n)-[r]-(m)
-                    RETURN n, r, m
-                    LIMIT 100
-                  `;
-                  setKgCypher(cypher);
-                }
+                const escaped = name.replace(/"/g, '\\"');
+                const fallback = `
+                  MATCH (p:Person)
+                  WHERE toLower(p.name) CONTAINS toLower("${escaped}")
+                  OPTIONAL MATCH (p)-[r1:POSTED]->(po:Post)
+                  WITH p, po, r1 LIMIT 5
+                  OPTIONAL MATCH (po)<-[r2:COMMENTED_ON]-(a:Account)
+                  WITH p, po, r1, r2, a LIMIT 5
+                  RETURN p, po, r1, r2, a
+                `;
+                setKgCypher(person.cypher || fallback);
                 setView('kg');
               }}
             />

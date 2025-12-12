@@ -78,7 +78,31 @@ def _write_social_graph_to_neo4j(graph: dict):
     accounts = graph.get("accounts") or []
     posts = graph.get("posts") or []
     interactions = graph.get("interactions") or []
+    edges = graph.get("edges") or []
     primary_account_id = graph.get("primary_account_id") or (accounts[0]["id"] if accounts else None)
+    # If interactions missing but edges provided, map mock edges (commented_on) to interactions
+    if not interactions and edges:
+        post_ids = {p.get("id") for p in posts}
+        acc_lookup = {a.get("id"): a for a in accounts}
+        for e in edges:
+            if (e.get("type") or "").lower() != "commented_on":
+                continue
+            src = e.get("source")
+            tgt = e.get("target")
+            if src in (None, "person"):
+                continue
+            if tgt not in post_ids:
+                continue
+            acc = acc_lookup.get(src) or {}
+            interactions.append(
+                {
+                    "account_id": src,
+                    "post_id": tgt,
+                    "type": "comment",
+                    "handle": acc.get("handle"),
+                    "display_name": acc.get("display_name"),
+                }
+            )
     # If interactions are missing, synthesize commenters (non-primary accounts) on posts
     if not interactions and posts:
         commenter_accounts = [a for a in accounts if a.get("id") != primary_account_id] or accounts
@@ -97,8 +121,9 @@ def _write_social_graph_to_neo4j(graph: dict):
         return
     cypher = """
     // create person and accounts (no Person->Account edges)
-    MERGE (p:Person {name: $person_name})
-    ON CREATE SET p.person_id = $person_id
+    MERGE (p:Person {person_id: $person_id})
+    ON CREATE SET p.name = $person_name
+    ON MATCH SET p.name = coalesce(p.name, $person_name)
     // remove legacy HAS_ACCOUNT edges for this person
     WITH p
     OPTIONAL MATCH (p)-[ha:HAS_ACCOUNT]->(:Account)
@@ -891,10 +916,11 @@ async def person_social_crawl(person_id: str = Query(..., description="Person ID
     if person.get("name"):
         escaped_name = str(person["name"]).replace('"', '\\"')
         cypher = f'''
-        MATCH (n:Person)
-        WHERE toLower(n.name) = toLower("{escaped_name}")
-        OPTIONAL MATCH (n)-[r]-(m)
-        RETURN n, r, m
+        MATCH (p:Person)
+        WHERE toLower(p.name) = toLower("{escaped_name}")
+        OPTIONAL MATCH (p)-[r1:POSTED]->(po:Post)
+        OPTIONAL MATCH (po)<-[r2:COMMENTED_ON]-(a:Account)
+        RETURN p, po, r1, r2, a
         LIMIT 200
         '''
     return {
@@ -1063,6 +1089,37 @@ async def live_toggle(req: LiveToggleRequest):
         cfg["enabled"] = True
         ingestion_queue.save_config(cfg)
         consumer_task = asyncio.create_task(_consume_ingestion_queue())
+        # If queue is empty, send last 5 news items immediately to clients
+        try:
+            if ingestion_queue.length() == 0:
+                db = SessionLocal()
+                try:
+                    recent = (
+                        db.query(AnalysisLog)
+                        .order_by(AnalysisLog.timestamp.desc())
+                        .limit(5)
+                        .all()
+                    )
+                    for log in reversed(recent):
+                        msg = {
+                            "type": "news",
+                            "data": {
+                                "id": str(log.id),
+                                "source": log.source or "Live",
+                                "title": log.summary or "",
+                                "ocr_text": log.raw_text or "",
+                                "english_summary": log.summary or "",
+                                "vietnamese_translation": log.vietnamese_translation or "",
+                                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                                "sentiment": "Neutral",
+                                "keywords": log.trending_keywords or [],
+                            },
+                        }
+                        await manager.broadcast(msg)
+                finally:
+                    db.close()
+        except Exception as exc:
+            print(f"[LiveToggle] Failed to send recent news: {exc}")
     return {"enabled": True}
 
 

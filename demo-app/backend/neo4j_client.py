@@ -37,6 +37,9 @@ class Neo4jClient:
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Event) REQUIRE n.news_id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NewsItem) REQUIRE n.news_id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE p.person_id IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Account) REQUIRE a.id IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (po:Post) REQUIRE po.id IS UNIQUE",
         ]
         with self.session() as session:
             for stmt in statements:

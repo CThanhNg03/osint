@@ -2,7 +2,7 @@
   "source": "mock",
   "person_name": "Le Trung Khoa",
   "accounts": [
-    { "id": "acct1", "handle": "@civic_watch", "display_name": "Civic Watch" },
+    { "id": "acct1", "handle": "@letrungkhoa71", "display_name": "Le Trung Khoa" },
     { "id": "acct2", "handle": "@marie_lane", "display_name": "Marie Lane" },
     { "id": "acct3", "handle": "@insight_corner", "display_name": "Insight Corner" },
     { "id": "acct4", "handle": "@openforum_daily", "display_name": "Open Forum Daily" },
