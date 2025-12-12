@@ -36,7 +36,6 @@
     }
   ],
   "edges": [
-    { "source": "acct1", "target": "post1", "type": "commented_on" },
     { "source": "acct2", "target": "post1", "type": "commented_on" },
     { "source": "acct3", "target": "post1", "type": "commented_on" },
 

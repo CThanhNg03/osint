@@ -80,6 +80,9 @@ def _write_social_graph_to_neo4j(graph: dict):
     interactions = graph.get("interactions") or []
     edges = graph.get("edges") or []
     primary_account_id = graph.get("primary_account_id") or (accounts[0]["id"] if accounts else None)
+    # If graph is mock, drop the first account (assumed to belong to the person) to avoid Person->Account edges
+    if graph.get("mock") and accounts:
+        accounts = accounts[1:]
     # If interactions missing but edges provided, map mock edges (commented_on) to interactions
     if not interactions and edges:
         post_ids = {p.get("id") for p in posts}
