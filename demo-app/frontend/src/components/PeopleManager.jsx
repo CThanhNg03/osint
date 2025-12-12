@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 
+// Person service calls go through the gateway unless explicitly overridden
 const resolveApiUrl = () => {
   const envUrl = import.meta.env.VITE_PERSON_API_URL || import.meta.env.VITE_API_URL;
-  if (envUrl) return envUrl.replace(/\/$/, '').replace(/:\d+$/, ':8001');
+  if (envUrl) return envUrl.replace(/\/$/, '');
   if (typeof window !== 'undefined') {
-    return `${window.location.protocol}//${window.location.hostname}:8001`;
+    return `${window.location.protocol}//${window.location.host}`;
   }
-  return 'http://localhost:8001';
+  return 'http://localhost:8000';
 };
 
 const PeopleManager = () => {

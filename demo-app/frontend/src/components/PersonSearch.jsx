@@ -11,7 +11,7 @@ const resolveApiUrl = () => {
 
 // Person API is proxied by the gateway; use API_URL unless explicitly overridden
 const resolvePersonApiUrl = () => {
-  const envUrl = import.meta.env.VITE_PERSON_API_URL;
+  const envUrl = import.meta.env.VITE_PERSON_API_URL || import.meta.env.VITE_API_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
   return resolveApiUrl();
 };
