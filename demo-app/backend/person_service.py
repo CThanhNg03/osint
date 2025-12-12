@@ -209,8 +209,14 @@ def _search_x_accounts(name: str) -> list[dict]:
 
 def _build_social_graph(person: dict, force_mock: bool = False) -> dict:
     """Build a simple graph of the person's X presence; falls back to mock data."""
-    if force_mock:
-        graph = _load_mock_social_graph()
+    mock_graph = _load_mock_social_graph()
+    # If person name matches mock, always return mock graph
+    mock_name = (mock_graph.get("person_name") or "").strip().lower()
+    person_name = (person.get("name") or person.get("id") or "").strip().lower()
+    use_mock = force_mock or (mock_name and person_name and mock_name == person_name)
+
+    if use_mock:
+        graph = mock_graph
     else:
         # Try account search
         accounts = _search_x_accounts(person.get("name") or person.get("id") or "")

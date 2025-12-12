@@ -48,6 +48,7 @@ class Neo4jClient:
         kg_data: Dict[str, Any],
         source: Optional[str] = None,
         summary: Optional[str] = None,
+        translation_vi: Optional[str] = None,
         timestamp: Optional[str] = None,
         keywords: Optional[List[str]] = None,
     ) -> None:
@@ -66,6 +67,7 @@ class Neo4jClient:
                 news_id,
                 source or "",
                 summary or "",
+                translation_vi or "",
                 timestamp,
                 entities,
                 events,
@@ -79,6 +81,7 @@ class Neo4jClient:
         news_id: int,
         source: str,
         summary: str,
+        translation_vi: str,
         timestamp: Optional[str],
         entities: List[Dict[str, Any]],
         events: List[Dict[str, Any]],
@@ -90,11 +93,13 @@ class Neo4jClient:
             MERGE (n:NewsItem {news_id: $news_id})
             SET n.source = $source,
                 n.summary = $summary,
+                n.translation_vi = $translation_vi,
                 n.timestamp = coalesce($timestamp, n.timestamp)
             """,
             news_id=news_id,
             source=source,
             summary=summary,
+            translation_vi=translation_vi,
             timestamp=timestamp,
         )
 

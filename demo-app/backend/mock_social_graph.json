@@ -1,18 +1,55 @@
 {
   "source": "mock",
-  "person_name": "Sample Person",
+  "person_name": "Le Trung Khoa",
   "accounts": [
-    { "id": "acct1", "handle": "@sample_news", "display_name": "Sample News Account" },
-    { "id": "acct2", "handle": "@sample_friend", "display_name": "Friend of Sample" }
+    { "id": "acct1", "handle": "@civic_watch", "display_name": "Civic Watch" },
+    { "id": "acct2", "handle": "@marie_lane", "display_name": "Marie Lane" },
+    { "id": "acct3", "handle": "@insight_corner", "display_name": "Insight Corner" },
+    { "id": "acct4", "handle": "@openforum_daily", "display_name": "Open Forum Daily" },
+    { "id": "acct5", "handle": "@lucas_mind", "display_name": "Lucas Mind" },
+    { "id": "acct6", "handle": "@mirrorbyte", "display_name": "MirrorByte" }
   ],
   "posts": [
-    { "id": "post1", "account_id": "acct1", "text": "Breaking: Sample Person featured in a new report.", "timestamp": "2025-12-01T10:00:00Z" },
-    { "id": "post2", "account_id": "acct2", "text": "Great discussion with Sample Person about regional news.", "timestamp": "2025-12-01T12:30:00Z" }
+    {
+      "id": "post1",
+      "account_id": "person",
+      "text": "Just published: my notes on transparency in public communication. Curious what people think.",
+      "timestamp": "2025-12-01T09:10:00Z"
+    },
+    {
+      "id": "post2",
+      "account_id": "person",
+      "text": "It's interesting how online discussions shift so quickly—sharing a few observations from this week.",
+      "timestamp": "2025-12-01T11:45:00Z"
+    },
+    {
+      "id": "post3",
+      "account_id": "person",
+      "text": "Working on a longer commentary about media ecosystems and their influence. Early thoughts here.",
+      "timestamp": "2025-12-01T14:20:00Z"
+    },
+    {
+      "id": "post4",
+      "account_id": "person",
+      "text": "Community feedback matters—thanks for the constructive messages over the past few days.",
+      "timestamp": "2025-12-01T16:00:00Z"
+    }
   ],
   "edges": [
-    { "source": "person", "target": "acct1", "type": "mentioned_in" },
-    { "source": "person", "target": "acct2", "type": "engaged_with" },
-    { "source": "acct2", "target": "acct1", "type": "replied_to", "post_id": "post1" }
+    { "source": "acct1", "target": "post1", "type": "commented_on" },
+    { "source": "acct2", "target": "post1", "type": "commented_on" },
+    { "source": "acct3", "target": "post1", "type": "commented_on" },
+
+    { "source": "acct2", "target": "post2", "type": "commented_on" },
+    { "source": "acct4", "target": "post2", "type": "commented_on" },
+    { "source": "acct5", "target": "post2", "type": "commented_on" },
+
+    { "source": "acct3", "target": "post3", "type": "commented_on" },
+    { "source": "acct6", "target": "post3", "type": "commented_on" },
+
+    { "source": "acct1", "target": "post4", "type": "commented_on" },
+    { "source": "acct5", "target": "post4", "type": "commented_on" },
+    { "source": "acct6", "target": "post4", "type": "commented_on" }
   ],
   "mock": true
 }

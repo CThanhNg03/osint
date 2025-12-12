@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 export const defaultSources = [
   {
@@ -14,7 +14,7 @@ export const defaultSources = [
     type: 'youtube',
     videoId: 'gCNeDWCI0vo',
     match: 'gCNeDWCI0vo',
-    embedUrl: 'https://www.youtube.com/embed/gCNeDWCI0vo?si=xvJK9TU-L6FAnKjp',
+    embedUrl: 'https://www.youtube.com/embed/gCNeDWCI0vo?autoplay=1&mute=0&controls=1&showinfo=0&rel=0',
   },
   {
     id: 'cnn-audio',
@@ -33,6 +33,8 @@ const LivePlayer = ({
   onCapture,
 }) => {
   const [selected, setSelected] = useState(selectedSourceId || sources[0]?.id || '');
+  const videoRef = useRef(null);
+  const hlsInstanceRef = useRef(null);
 
   useEffect(() => {
     if (selectedSourceId && selectedSourceId !== selected) {
@@ -44,6 +46,59 @@ const LivePlayer = ({
     () => sources.find((s) => s.id === selected) || sources[0],
     [selected, sources]
   );
+
+    // Attach HLS playback when needed (desktop Chrome/Firefox)
+    useEffect(() => {
+      const videoEl = videoRef.current;
+      if (!videoEl || current?.type !== 'hls' || !current.url) return;
+
+    // Cleanup any previous instance
+    if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.destroy();
+      hlsInstanceRef.current = null;
+    }
+
+    // Native HLS (Safari/iOS)
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = current.url;
+      return;
+    }
+
+    const loadHls = () =>
+      new Promise((resolve, reject) => {
+        if (window.Hls) return resolve(window.Hls);
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+        script.onload = () => resolve(window.Hls);
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+
+    loadHls()
+      .then((HlsLib) => {
+        if (!HlsLib || !HlsLib.isSupported()) return;
+        const hls = new HlsLib({
+          maxBufferLength: 30,
+          xhrSetup: (xhr) => {
+            xhr.withCredentials = false;
+          },
+        });
+        hls.on(HlsLib.Events.ERROR, (evt, data) => {
+          console.error('[HLS] error', evt, data);
+        });
+        hlsInstanceRef.current = hls;
+        hls.loadSource(current.url);
+        hls.attachMedia(videoEl);
+      })
+      .catch((err) => console.error('Failed to load hls.js', err));
+
+    return () => {
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.destroy();
+        hlsInstanceRef.current = null;
+      }
+    };
+    }, [current]);
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg h-full flex flex-col overflow-hidden">
@@ -93,6 +148,30 @@ const LivePlayer = ({
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
+          />
+        )}
+        {current?.type === 'embed' && current?.embedUrl && (
+          <iframe
+            title={current.label}
+            src={current.embedUrl}
+            className="w-full h-full"
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allowFullScreen
+          />
+        )}
+        {current?.type === 'hls' && current?.url && (
+          <video
+            key={current.url}
+            className="w-full h-full bg-black"
+            controls
+            autoPlay
+            muted
+            src={current.url}
+            playsInline
+            ref={videoRef}
+            onError={(e) => console.error('Video element error', e?.currentTarget?.error)}
           />
         )}
         {current?.type === 'audio' && current?.url && (

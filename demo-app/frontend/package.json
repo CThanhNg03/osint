@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "hls.js": "^1.5.7",
     "neovis.js": "^2.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

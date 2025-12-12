@@ -30,6 +30,12 @@ from neo4j_client import Neo4jClient
 from openai import OpenAI
 import feedparser
 
+# Optional fixed translator (no-LM) for Khmer -> Vietnamese
+try:
+    from deep_translator import GoogleTranslator
+except Exception:
+    GoogleTranslator = None
+
 # Create DB tables
 Base.metadata.create_all(bind=engine)
 
@@ -190,6 +196,19 @@ def _translate_to_vi(text: str, client: OpenAI | None = None) -> str:
     content = (text or "").strip()
     if not content:
         return ""
+
+    def _contains_khmer(val: str) -> bool:
+        return any("\u1780" <= ch <= "\u17ff" for ch in val)
+
+    # Prefer fixed translator if Khmer detected and library is available
+    if _contains_khmer(content) and GoogleTranslator:
+        try:
+            fixed = GoogleTranslator(source="km", target="vi").translate(content)
+            if fixed:
+                return fixed.strip()
+        except Exception:
+            pass
+
     if not client:
         api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -199,6 +218,7 @@ def _translate_to_vi(text: str, client: OpenAI | None = None) -> str:
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
         )
     prompt = f"Translate to Vietnamese, keep concise, no markdown:\n{content[:1500]}"
+    khmer_prompt = f"Translate this Khmer text to Vietnamese. Return Vietnamese only, no markdown:\n{content[:1500]}"
     try:
         resp = client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -206,7 +226,21 @@ def _translate_to_vi(text: str, client: OpenAI | None = None) -> str:
             temperature=0.2,
             max_tokens=400,
         )
-        return (resp.choices[0].message.content or "").strip()
+        result = (resp.choices[0].message.content or "").strip()
+        if result:
+            return result
+        # Retry with explicit Khmer->VI instruction if text contains Khmer script
+        if _contains_khmer(content):
+            resp = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": khmer_prompt}],
+                temperature=0.2,
+                max_tokens=400,
+            )
+            fallback = (resp.choices[0].message.content or "").strip()
+            if fallback:
+                return fallback
+        return ""
     except Exception:
         return ""
 
@@ -299,6 +333,7 @@ def _background_upsert_crawled_news(articles, search_terms=None):
                 kg_data={"entities": [], "events": [], "relations": []},
                 source=item.get("source") or "NewsAPI",
                 summary=item.get("title") or item.get("description") or "",
+                translation_vi=item.get("vietnamese_translation") or "",
                 timestamp=item.get("published_at"),
                 keywords=search_terms,
             )

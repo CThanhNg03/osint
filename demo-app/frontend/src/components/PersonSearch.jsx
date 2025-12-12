@@ -9,12 +9,11 @@ const resolveApiUrl = () => {
   return 'http://localhost:8000';
 };
 
+// Person API is proxied by the gateway; use API_URL unless explicitly overridden
 const resolvePersonApiUrl = () => {
   const envUrl = import.meta.env.VITE_PERSON_API_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
-  const base = resolveApiUrl();
-  // crude default: same host, port 8001
-  return base.replace(/:\d+$/, ':8001');
+  return resolveApiUrl();
 };
 
 const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {

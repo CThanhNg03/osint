@@ -127,6 +127,7 @@ def _background_upsert_crawled_news(articles, search_terms=None):
                 kg_data={"entities": [], "events": [], "relations": []},
                 source=item.get("source") or "NewsAPI",
                 summary=item.get("title") or item.get("description") or "",
+                translation_vi=item.get("vietnamese_translation") or "",
                 timestamp=item.get("published_at"),
                 keywords=search_terms,
             )

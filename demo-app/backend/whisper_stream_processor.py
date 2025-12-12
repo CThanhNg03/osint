@@ -31,6 +31,24 @@ def _friendly_source_name(src: str) -> str:
     return src
 
 
+def _is_probable_ad(text: str, summary: str) -> bool:
+    """Heuristic to drop obvious promo/bumper content."""
+    blob = f"{text or ''} {summary or ''}".lower()
+    if not blob.strip():
+        return False
+    promo_phrases = [
+        "connects viewers",
+        "promotes animal welfare",
+        "sponsored by",
+        "thanks for watching",
+        "subscribe for more",
+        "you're listening to cnn",
+        "euronews connects viewers",
+        "breaking news updates around the clock",
+    ]
+    return any(p in blob for p in promo_phrases)
+
+
 class WhisperStreamProcessor:
     """Background loop that records short clips from multiple sources and transcribes with Whisper."""
 
@@ -233,6 +251,11 @@ class WhisperStreamProcessor:
         segments_clean = _normalize_segments(segments_val)
 
         summary_en, translation_vi, subtitle_vi = self._summarize_and_translate(text)
+        # Drop probable ads/bumper content by clearing summaries so the API can ignore them
+        if _is_probable_ad(text, summary_en):
+            summary_en = ""
+            translation_vi = ""
+            subtitle_vi = ""
 
         def _clean(value: str) -> str:
             v = (value or "").strip()
@@ -244,12 +267,12 @@ class WhisperStreamProcessor:
                 v = v.strip("* ").strip()
             return v
 
-        headline = _clean(summary_en or (text[:120] if text else "Audio capture"))
+        headline = _clean(summary_en or "")
 
         return {
             "source": source_name,
             "headline_ocr": headline,
-            "summary": summary_en or text,
+            "summary": summary_en or "",
             "vietnamese_translation": _clean(translation_vi),
             "keywords": [],
             "sentiment_score": 0.0,

@@ -94,6 +94,7 @@ class KGWorker:
                         kg_data,
                         source=log.source,
                         summary=log.summary,
+                        translation_vi=log.vietnamese_translation or "",
                         timestamp=log.timestamp.isoformat() if log.timestamp else None,
                         keywords=log.trending_keywords or [],
                     )
