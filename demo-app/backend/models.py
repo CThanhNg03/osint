@@ -24,3 +24,17 @@ class AnalysisLog(Base):
     kg_status = Column(String, default="pending")
     kg_raw = Column(JSON, nullable=True)
     kg_processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DocumentRecord(Base):
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String, nullable=False)
+    storage_path = Column(String, nullable=False)
+    original_name = Column(String, nullable=False)
+    pages = Column(Integer, default=0)
+    summary = Column(Text, nullable=True)
+    text_excerpt = Column(Text, nullable=True)
+    metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

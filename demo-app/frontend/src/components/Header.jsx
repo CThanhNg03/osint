@@ -34,6 +34,12 @@ const Header = ({ view, onChangeView, processingEnabled, togglingLive = false, o
           People DB
         </button>
         <button
+          className={`${baseBtn} ${view === 'documents' ? active : inactive}`}
+          onClick={() => onChangeView('documents')}
+        >
+          Documents
+        </button>
+        <button
           className={`${baseBtn} ${toggleDisabled ? 'opacity-60 cursor-not-allowed' : ''} ${
             processingEnabled
               ? 'bg-emerald-600 border-emerald-500 text-white'

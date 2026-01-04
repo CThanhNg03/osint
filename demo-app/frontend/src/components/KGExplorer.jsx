@@ -3,7 +3,12 @@ import NeoVis, { NEOVIS_ADVANCED_CONFIG } from "neovis.js";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const KGExplorer = ({ externalTerms = [], externalCypher = null, externalMode = null }) => {
+const KGExplorer = ({
+  externalTerms = [],
+  externalCypher = null,
+  externalMode = null,
+  onShowPersonReport = () => {},
+}) => {
   const containerRef = useRef(null);
   const vizRef = useRef(null);
   const [terms, setTerms] = useState([]);
@@ -546,7 +551,35 @@ const KGExplorer = ({ externalTerms = [], externalCypher = null, externalMode = 
             </div>
 
             <div>
-              <h3 className="text-sm font-semibold mb-2">Selection</h3>
+              <h3 className="text-sm font-semibold mb-2 flex items-center justify-between">
+                <span>Selection</span>
+                {selectedNode &&
+                  (selectedNode.label === "Person" ||
+                    selectedNode.group === "Person" ||
+                    selectedNode?.properties?.person_id) && (
+                    <button
+                      onClick={() => {
+                        const identifier =
+                          selectedNode?.properties?.person_id ||
+                          selectedNode?.properties?.id ||
+                          selectedNode?.id ||
+                          selectedNode?.properties?.name;
+                        if (!identifier) return;
+                        onShowPersonReport({
+                          identifier,
+                          name:
+                            selectedNode?.properties?.name ||
+                            selectedNode?.title ||
+                            selectedNode?.id,
+                          node: selectedNode,
+                        });
+                      }}
+                      className="px-3 py-1 text-xs bg-amber-500 hover:bg-amber-400 text-gray-900 font-semibold rounded shadow"
+                    >
+                      Báo cáo nhanh
+                    </button>
+                  )}
+              </h3>
               {!selectedNode && (
                 <div className="text-gray-400 text-sm">Click a node to view details.</div>
               )}

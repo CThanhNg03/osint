@@ -9,6 +9,8 @@ import TranscriptPanel from './components/TranscriptPanel';
 import KGExplorer from './components/KGExplorer';
 import PersonSearch from './components/PersonSearch';
 import PeopleManager from './components/PeopleManager';
+import DocumentManager from './components/DocumentManager';
+import PersonReport from './components/PersonReport';
 import { defaultSources } from './components/LivePlayer';
 
 function App() {
@@ -41,6 +43,7 @@ function App() {
   const [processingEnabled, setProcessingEnabled] = useState(false);
   const [personImage, setPersonImage] = useState(null);
   const [selectedSourceId, setSelectedSourceId] = useState(defaultSources[0]?.id || '');
+  const [personReportTarget, setPersonReportTarget] = useState(null);
   const livePlayerRef = useRef(null);
   const ws = useRef(null);
 
@@ -268,6 +271,11 @@ function App() {
             externalTerms={kgTerms}
             externalCypher={kgCypher}
             externalMode={kgMode}
+            onShowPersonReport={(node) => {
+              if (!node) return;
+              setPersonReportTarget(node);
+              setView('personReport');
+            }}
           />
         </div>
       )}
@@ -275,6 +283,12 @@ function App() {
       {view === 'people' && (
         <div className='flex-1 overflow-hidden'>
           <PeopleManager />
+        </div>
+      )}
+
+      {view === 'documents' && (
+        <div className='flex-1 overflow-hidden'>
+          <DocumentManager />
         </div>
       )}
 
@@ -301,6 +315,15 @@ function App() {
                 setView('kg');
               }}
             />
+        </div>
+      )}
+
+      {view === 'personReport' && (
+        <div className='flex-1 overflow-hidden bg-gray-950'>
+          <PersonReport
+            target={personReportTarget}
+            onBack={() => setView('kg')}
+          />
         </div>
       )}
     </div>

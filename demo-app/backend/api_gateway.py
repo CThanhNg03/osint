@@ -1,8 +1,11 @@
 import asyncio
+import json
 import os
 import hashlib
+import uuid
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 import urllib.parse
 
 import httpx
@@ -18,6 +21,7 @@ from fastapi import (
     File,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -25,7 +29,8 @@ from chat_handler import answer_question
 from database import Base, engine, get_db, SessionLocal
 from ingestion_queue import IngestionQueue
 from kg_worker import KGWorker
-from models import AnalysisLog
+from models import AnalysisLog, DocumentRecord
+from PyPDF2 import PdfReader
 from neo4j_client import Neo4jClient
 from openai import OpenAI
 import feedparser
@@ -41,9 +46,15 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Media Monitor API Gateway")
 
+origins = [
+    "http://10.100.21.122:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +79,8 @@ except Exception as exc:
 
 ingestion_queue = IngestionQueue.from_env()
 PERSON_SERVICE_URL = os.getenv("PERSON_SERVICE_URL", "http://person-service:8001")
+DOCUMENT_STORE = Path(os.getenv("DOCUMENT_STORE", "./data/documents"))
+DOCUMENT_STORE.mkdir(parents=True, exist_ok=True)
 
 def _write_social_graph_to_neo4j(graph: dict):
     """Persist a simple person->account->post graph into Neo4j."""
@@ -216,6 +229,428 @@ def _social_graph_for_name(name: str) -> dict:
         "edges": [],
         "interactions": interactions,
         "mock": True,
+    }
+
+
+def _format_graph_node(node):
+    """Convert a Neo4j node into a serializable dict."""
+    if node is None:
+        return None
+    props = dict(node)
+    labels = list(getattr(node, "labels", []))
+    element_id = getattr(node, "element_id", None)
+    display_name = (
+        props.get("name")
+        or props.get("display_name")
+        or props.get("handle")
+        or props.get("title")
+        or props.get("caption")
+        or props.get("id")
+        or props.get("person_id")
+        or element_id
+    )
+    node_type = props.get("type") or (labels[0] if labels else "Node")
+    preferred_id = (
+        props.get("person_id")
+        or props.get("id")
+        or element_id
+    )
+    return {
+        "id": preferred_id,
+        "element_id": element_id,
+        "labels": labels,
+        "type": node_type,
+        "display_name": display_name,
+        "properties": props,
+    }
+
+
+def _get_person_graph(identifier: str):
+    """Fetch a person node and its level 1 + level 2 neighbors."""
+    if not identifier:
+        raise HTTPException(status_code=400, detail="identifier is required")
+    if not neo4j_client:
+        raise HTTPException(status_code=503, detail="Neo4j not configured")
+    person_query = """
+    MATCH (p:Person)
+    WHERE elementId(p) = $identifier
+       OR p.person_id = $identifier
+       OR toLower(p.name) = toLower($identifier)
+    RETURN p
+    LIMIT 1
+    """
+    level1_query = """
+    MATCH (p:Person)
+    WHERE elementId(p) = $identifier
+       OR p.person_id = $identifier
+       OR toLower(p.name) = toLower($identifier)
+    MATCH (p)-[r]-(n)
+    RETURN DISTINCT n AS node,
+           type(r) AS rel_type,
+           CASE WHEN startNode(r) = p THEN 'out' ELSE 'in' END AS direction,
+           elementId(r) AS rel_id
+    LIMIT 80
+    """
+    level2_query = """
+    MATCH (p:Person)
+    WHERE elementId(p) = $identifier
+       OR p.person_id = $identifier
+       OR toLower(p.name) = toLower($identifier)
+    MATCH (p)-[r1]-(n1)-[r2]-(n2)
+    WHERE n2 <> p
+    RETURN DISTINCT n1 AS via_node,
+           n2 AS node,
+           type(r2) AS rel_type,
+           CASE WHEN startNode(r2) = n1 THEN 'out' ELSE 'in' END AS direction,
+           elementId(r2) AS rel_id
+    LIMIT 150
+    """
+    with neo4j_client.session() as session:
+        person_record = session.run(person_query, identifier=identifier).single()
+        if not person_record:
+            raise HTTPException(status_code=404, detail="Person node not found")
+        person_node = _format_graph_node(person_record["p"])
+
+        level1_records = session.run(level1_query, identifier=identifier).data()
+        level1_nodes = []
+        for rec in level1_records:
+            formatted = _format_graph_node(rec.get("node"))
+            if not formatted:
+                continue
+            level1_nodes.append(
+                {
+                    "node": formatted,
+                    "relationship": rec.get("rel_type"),
+                    "direction": rec.get("direction"),
+                    "relationship_id": rec.get("rel_id"),
+                }
+            )
+
+        level2_records = session.run(level2_query, identifier=identifier).data()
+        level2_nodes = []
+        for rec in level2_records:
+            node_formatted = _format_graph_node(rec.get("node"))
+            via_formatted = _format_graph_node(rec.get("via_node"))
+            if not node_formatted or not via_formatted:
+                continue
+            level2_nodes.append(
+                {
+                    "node": node_formatted,
+                    "via": {
+                        "id": via_formatted.get("id"),
+                        "element_id": via_formatted.get("element_id"),
+                        "display_name": via_formatted.get("display_name"),
+                        "type": via_formatted.get("type"),
+                    },
+                    "relationship": rec.get("rel_type"),
+                    "direction": rec.get("direction"),
+                    "relationship_id": rec.get("rel_id"),
+                }
+            )
+
+    return person_node, level1_nodes, level2_nodes
+
+
+def _build_graph_snapshot(person, level1_nodes, level2_nodes, person_profile=None):
+    """Compose condensed text context for the LLM."""
+    def _condense_entry(entry):
+        node = entry.get("node") or {}
+        props = node.get("properties") or {}
+        highlights = {}
+        for key in ("role", "title", "summary", "description", "handle", "source", "sentiment", "keywords"):
+            val = props.get(key)
+            if val:
+                highlights[key] = val
+        condensed = {
+            "name": node.get("display_name"),
+            "type": node.get("type"),
+            "labels": node.get("labels"),
+            "relationship": entry.get("relationship"),
+            "direction": entry.get("direction"),
+            "highlights": highlights,
+        }
+        via = entry.get("via")
+        if via:
+            condensed["via"] = via
+        return condensed
+
+    snapshot = {
+        "person": {
+            "name": person.get("display_name"),
+            "type": person.get("type"),
+            "labels": person.get("labels"),
+            "properties": person.get("properties"),
+        },
+        "level1": [_condense_entry(e) for e in level1_nodes[:20]],
+        "level2": [_condense_entry(e) for e in level2_nodes[:30]],
+    }
+    if person_profile:
+        snapshot["person"]["profile"] = person_profile
+    return json.dumps(snapshot, ensure_ascii=False)
+
+
+def _generate_fallback_report(person, level1_nodes, level2_nodes):
+    """Return a simple Vietnamese report if LLM is unavailable."""
+    name = person.get("display_name") or person.get("properties", {}).get("name") or "Muc tieu"
+    lvl1_names = ", ".join({(n.get("node") or {}).get("display_name") for n in level1_nodes if (n.get("node") or {}).get("display_name")}) or "khong ro"
+    lvl2_names = ", ".join({(n.get("node") or {}).get("display_name") for n in level2_nodes if (n.get("node") or {}).get("display_name")}) or "khong ro"
+    return {
+        "tom_tat_hanh_dong": f"Chưa có dữ liệu chi tiết cho {name}. Chỉ nhìn thấy kết nối cấp 1: {lvl1_names}. Cấp 2: {lvl2_names}.",
+        "ho_so_doi_tuong": f"{name} là nhân vật được đánh dấu trong đồ thị, nhưng hệ thống chưa có hồ sơ đầy đủ.",
+        "danh_gia_tac_dong": "Chưa đủ căn cứ để đánh giá tác động, cần bổ sung dữ liệu hoạt động gần đây.",
+        "khuyen_nghi": "Thu thập thêm nội dung, xác minh các mối quan hệ quan trọng và theo dõi dòng thảo luận thời gian thực.",
+    }
+
+
+def _fetch_person_profile(person):
+    """Retrieve authoritative person profile from person-service."""
+    props = person.get("properties") or {}
+    identifier = (
+        props.get("person_id")
+        or props.get("id")
+        or person.get("id")
+        or props.get("name")
+        or person.get("display_name")
+    )
+    if not identifier:
+        return None
+    base = (PERSON_SERVICE_URL or "").rstrip("/")
+    if not base:
+        return None
+    url = f"{base}/people/{urllib.parse.quote(identifier)}"
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            resp = client.get(url)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as exc:
+        print(f"[PersonProfile] lookup failed for {identifier}: {exc}")
+    return None
+
+
+def _compose_target_profile(profile: dict | None) -> str | None:
+    if not profile:
+        return None
+    lines = []
+    name = profile.get("name")
+    if name:
+        lines.append(f"- Họ tên: {name}")
+    nationality = profile.get("nationality")
+    if nationality:
+        lines.append(f"- Quốc tịch: {nationality}")
+    dob = profile.get("date_of_birth")
+    if dob:
+        lines.append(f"- Ngày sinh: {dob}")
+    pid = profile.get("id_number")
+    if pid:
+        lines.append(f"- Định danh: {pid}")
+    aliases = profile.get("aliases")
+    if aliases:
+        lines.append(f"- Bí danh: {', '.join(aliases)}")
+    note = profile.get("note")
+    if note:
+        lines.append(f"- Ghi chú: {note}")
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
+def _apply_person_profile(report: dict, person_profile: dict | None) -> dict:
+    if not isinstance(report, dict):
+        report = {}
+    profile_text = _compose_target_profile(person_profile)
+    if profile_text:
+        report = dict(report)
+        report["ho_so_doi_tuong"] = profile_text
+    return report
+
+
+def _ensure_bullet_format(text: str) -> str:
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    formatted = []
+    for line in lines:
+        if not line.startswith("-"):
+            formatted.append(f"- {line.lstrip('-• ')}")
+        else:
+            formatted.append(line)
+    return "\n".join(formatted)
+
+
+def _audit_llm_call(model_name, prompt_preview, success, person_identifier=None, response_preview=None, error_message=None, section=None):
+    """Simple console audit for LLM invocations."""
+    prompt_snippet = (prompt_preview or "").strip()
+    response_snippet = (response_preview or "").strip()
+    error_snippet = (error_message or "").strip()
+    log = {
+        "model": model_name,
+        "person_id": person_identifier,
+        "success": bool(success),
+        "section": section,
+        "prompt_preview": prompt_snippet[:500],
+        "response_preview": response_snippet[:500],
+        "error": error_snippet[:300] if error_snippet else None,
+    }
+    print("[LLM Audit]", json.dumps(log, ensure_ascii=False))
+
+
+def _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=None):
+    """Use Groq/OpenAI to generate a Vietnamese analysis report."""
+    fallback_report = _generate_fallback_report(person, level1_nodes, level2_nodes)
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return _apply_person_profile(fallback_report, person_profile)
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+    )
+    snapshot = _build_graph_snapshot(person, level1_nodes, level2_nodes, person_profile=person_profile)
+    model_name = os.getenv("GRAPH_REPORT_MODEL", "llama-3.1-8b-instant")
+    person_identifier = (
+        (person.get("properties") or {}).get("person_id")
+        or (person.get("properties") or {}).get("id")
+        or person.get("id")
+    )
+    system_prompt = "Bạn là chuyên gia phân tích mạng xã hội, luôn trả lời tiếng Việt có dấu."
+    section_instructions = {
+        "tom_tat_hanh_dong": "Tóm tắt các hành động, bài đăng, thông điệp và tương tác gần nhất của đối tượng và nguồn liên quan.",
+        "danh_gia_tac_dong": "Đánh giá tác động xã hội/chính trị/kinh tế của các hành động và kết nối đó.",
+        "khuyen_nghi": "Đưa ra khuyến nghị chiến lược cụ thể cho 24-72 giờ tới để xử lý hoặc chủ động với tình huống.",
+    }
+
+    def _request_section(section_key: str, directive: str) -> str | None:
+        prompt = (
+            f"Nhiệm vụ: {directive}\n"
+            "Yêu cầu: trả lời dạng bullet, mỗi dòng bắt đầu bằng '- ', không thêm tiêu đề hoặc chú thích khác.\n"
+            "Nếu thiếu dữ liệu hãy ghi rõ '- Chưa đủ dữ liệu để đánh giá'.\n"
+            f"Dữ liệu đồ thị:\n```json\n{snapshot}\n```"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        prompt_for_audit = f"{directive}\n{snapshot}"
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=400,
+            )
+        except Exception as exc:
+            _audit_llm_call(
+                model_name,
+                prompt_for_audit,
+                success=False,
+                person_identifier=person_identifier,
+                error_message=str(exc),
+                section=section_key,
+            )
+            return None
+        choice = (response.choices or [{}])[0]
+        message = getattr(choice, 'message', None)
+        if isinstance(message, dict):
+            content = message.get('content')
+        else:
+            content = getattr(message, 'content', None)
+        if not content:
+            _audit_llm_call(
+                model_name,
+                prompt_for_audit,
+                success=False,
+                person_identifier=person_identifier,
+                error_message='Empty content',
+                section=section_key,
+            )
+            return None
+        formatted = _ensure_bullet_format(content)
+        _audit_llm_call(
+            model_name,
+            prompt_for_audit,
+            success=True,
+            person_identifier=person_identifier,
+            response_preview=formatted[:500],
+            section=section_key,
+        )
+        return formatted
+
+    report = dict(fallback_report)
+    for key, directive in section_instructions.items():
+        value = _request_section(key, directive)
+        if value:
+            report[key] = value
+
+    return _apply_person_profile(report, person_profile)
+
+
+
+def _extract_pdf_metadata(file_path: Path) -> dict:
+    pages = 0
+    full_text_parts = []
+    metadata = {}
+    try:
+        reader = PdfReader(str(file_path))
+        pages = len(reader.pages)
+        metadata = {k: str(v) for k, v in (reader.metadata or {}).items()}
+        for page in reader.pages:
+            try:
+                full_text_parts.append(page.extract_text() or "")
+            except Exception:
+                full_text_parts.append("")
+    except Exception as exc:
+        print(f"[Documents] Failed to parse PDF {file_path}: {exc}")
+    full_text = "\n".join(full_text_parts).strip()
+    excerpt = full_text[:10000]
+    return {
+        "pages": pages,
+        "full_text": full_text,
+        "excerpt": excerpt,
+        "metadata": metadata,
+    }
+
+
+async def _summarize_document_text(content: str) -> str:
+    cleaned = (content or "").strip()
+    if not cleaned:
+        return ""
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return cleaned[:800]
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+    )
+    prompt = (
+        "Tóm tắt tài liệu sau bằng tiếng Việt có dấu. "
+        "Viết 3-5 bullet nêu nội dung chính, sự kiện hoặc nhân vật đáng chú ý.\n"
+        f"Nội dung:\n{cleaned[:6000]}"
+    )
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=os.getenv("DOCUMENT_SUMMARY_MODEL", "llama-3.1-8b-instant"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        text_resp = (response.choices[0].message.content or "").strip()
+        return _ensure_bullet_format(text_resp) if text_resp else cleaned[:800]
+    except Exception as exc:
+        print(f"[Documents] Summary generation failed: {exc}")
+        return cleaned[:800]
+
+
+def _document_to_dict(rec: DocumentRecord) -> dict:
+    return {
+        "id": rec.id,
+        "filename": rec.filename,
+        "original_name": rec.original_name,
+        "pages": rec.pages,
+        "summary": rec.summary,
+        "text_excerpt": rec.text_excerpt,
+        "metadata": rec.metadata or {},
+        "created_at": rec.created_at.isoformat() if rec.created_at else None,
     }
 
 
@@ -1026,6 +1461,169 @@ async def kg_search(keyword: str = Query(""), limit: int = Query(50, le=100)):
             }
 
     return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+
+@app.get("/kg/person-analysis")
+async def kg_person_analysis(node_id: str = Query(..., description="Person elementId/person_id/name identifier")):
+    """Generate a Vietnamese analysis report for a person node and its close social graph."""
+    person, level1_nodes, level2_nodes = _get_person_graph(node_id)
+    person_profile = _fetch_person_profile(person)
+    report = _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=person_profile)
+    return {
+        "person": person,
+        "level1_nodes": level1_nodes,
+        "level2_nodes": level2_nodes,
+        "person_profile": person_profile,
+        "report": report,
+    }
+
+
+@app.get("/documents")
+async def list_documents():
+    db = SessionLocal()
+    try:
+        docs = db.query(DocumentRecord).order_by(DocumentRecord.created_at.desc()).all()
+        return [_document_to_dict(doc) for doc in docs]
+    finally:
+        db.close()
+
+
+@app.get("/documents/{doc_id}")
+async def get_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        rec = db.query(DocumentRecord).filter(DocumentRecord.id == doc_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return _document_to_dict(rec)
+    finally:
+        db.close()
+
+
+@app.get("/documents/{doc_id}/file")
+async def download_document_file(doc_id: int):
+    db = SessionLocal()
+    try:
+        rec = db.query(DocumentRecord).filter(DocumentRecord.id == doc_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Document not found")
+    finally:
+        db.close()
+    path = Path(rec.storage_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=rec.original_name or path.name,
+    )
+
+
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
+    blob = await file.read()
+    if not blob:
+        raise HTTPException(status_code=400, detail="Empty file")
+    doc_name = f"{uuid.uuid4().hex}.pdf"
+    storage_path = DOCUMENT_STORE / doc_name
+    try:
+        storage_path.write_bytes(blob)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to store document: {exc}") from exc
+
+    parsed = _extract_pdf_metadata(storage_path)
+    summary = await _summarize_document_text(parsed.get("full_text", ""))
+    db = SessionLocal()
+    try:
+        rec = DocumentRecord(
+            filename=doc_name,
+            storage_path=str(storage_path),
+            original_name=file.filename or doc_name,
+            pages=parsed.get("pages") or 0,
+            summary=summary,
+            text_excerpt=parsed.get("excerpt"),
+            metadata={
+                "pdf_metadata": parsed.get("metadata") or {},
+                "size_bytes": len(blob),
+            },
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return _document_to_dict(rec)
+    except Exception as exc:
+        db.rollback()
+        try:
+            storage_path.unlink()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to persist document: {exc}") from exc
+    finally:
+        db.close()
+
+
+@app.delete("/documents/{doc_id}")
+async def delete_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        rec = db.query(DocumentRecord).filter(DocumentRecord.id == doc_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Document not found")
+        db.delete(rec)
+        db.commit()
+        try:
+            Path(rec.storage_path).unlink()
+        except Exception:
+            pass
+        return {"status": "deleted", "id": doc_id}
+    finally:
+        db.close()
+
+
+@app.post("/documents/{doc_id}/extract-kg")
+async def extract_document_kg(doc_id: int):
+    db = SessionLocal()
+    try:
+        rec = db.query(DocumentRecord).filter(DocumentRecord.id == doc_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Document not found")
+    finally:
+        db.close()
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Missing GROQ_API_KEY/OPENAI_API_KEY")
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+    )
+    fake_log = AnalysisLog(
+        source="OCR Document",
+        summary=rec.summary or (rec.text_excerpt or "")[:1000],
+        vietnamese_translation=rec.summary or "",
+        raw_text=rec.text_excerpt or "",
+        sentiment_score=0.0,
+        trending_keywords=[],
+    )
+    kg_data = await extract_kg_for_log(fake_log, client)
+    neo4j_status = False
+    if neo4j_client:
+        doc_hash = int(hashlib.md5(f"document-{rec.id}".encode("utf-8")).hexdigest()[:16], 16) % (2**63 - 1)
+        try:
+            neo4j_client.upsert_kg_item(
+                news_id=doc_hash,
+                kg_data=kg_data,
+                source="OCR Document",
+                summary=rec.summary or rec.original_name,
+                translation_vi=rec.summary or "",
+                timestamp=datetime.utcnow().isoformat(),
+                keywords=[],
+            )
+            neo4j_status = True
+        except Exception as exc:
+            print(f"[Documents] Neo4j upsert failed: {exc}")
+    return {"kg": kg_data, "neo4j_upserted": neo4j_status}
 
 
 @app.get("/asr/status")

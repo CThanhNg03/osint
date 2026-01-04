@@ -17,3 +17,4 @@ redis
 pytest
 feedparser
 deep-translator
+PyPDF2
