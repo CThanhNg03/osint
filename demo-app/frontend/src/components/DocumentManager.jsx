@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -19,8 +19,19 @@ const DocumentManager = () => {
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [extractingId, setExtractingId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
   const [kgResult, setKgResult] = useState(null);
   const fileInputRef = useRef(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const resetPreviewUrl = useCallback(() => {
+    setPreviewUrl((prev) => {
+      if (prev && prev.startsWith("blob:")) {
+        URL.revokeObjectURL(prev);
+      }
+      return null;
+    });
+  }, []);
 
   const fetchDocuments = async () => {
     try {
@@ -37,9 +48,28 @@ const DocumentManager = () => {
     fetchDocuments();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      resetPreviewUrl();
+    };
+  }, [resetPreviewUrl]);
+
+  useEffect(() => {
+    if (!modalOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        resetPreviewUrl();
+        setModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [modalOpen, resetPreviewUrl]);
+
   const fetchDetail = async (docId) => {
     setLoading(true);
     setError("");
+    resetPreviewUrl();
     try {
       const resp = await fetch(`${API_URL}/documents/${docId}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -47,6 +77,11 @@ const DocumentManager = () => {
       setSelectedDoc(data);
       setSelectedId(docId);
       setKgResult(null);
+      setModalOpen(true);
+      const blobUrl = await fetchPreviewBlob(docId);
+      if (blobUrl) {
+        setPreviewUrl(blobUrl);
+      }
     } catch (err) {
       setError(err.message || "Không tải được chi tiết tài liệu");
     } finally {
@@ -94,6 +129,8 @@ const DocumentManager = () => {
         setSelectedDoc(null);
         setSelectedId(null);
         setKgResult(null);
+        resetPreviewUrl();
+        setModalOpen(false);
       }
     } catch (err) {
       setError(err.message || "Không thể xóa tài liệu");
@@ -118,7 +155,48 @@ const DocumentManager = () => {
   };
 
   const pdfMetadata = selectedDoc?.metadata?.pdf_metadata || {};
-  const previewUrl = selectedDoc ? `${API_URL}/documents/${selectedDoc.id}/file` : null;
+
+  const handleRowKeyDown = (event, docId) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      fetchDetail(docId);
+    }
+  };
+
+  const handleDownload = async (event, doc) => {
+    event.stopPropagation();
+    setDownloadingId(doc.id);
+    setError("");
+    try {
+      const resp = await fetch(`${API_URL}/documents/${doc.id}/file`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = doc.original_name || doc.filename || `tai-lieu-${doc.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Không thể tải xuống tệp");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const fetchPreviewBlob = async (docId) => {
+    try {
+      const resp = await fetch(`${API_URL}/documents/${docId}/file`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      console.error("Preview download failed", err);
+      return null;
+    }
+  };
 
   return (
     <div className="h-full w-full bg-gray-950 text-white p-4 flex flex-col gap-4 overflow-hidden">
@@ -149,13 +227,13 @@ const DocumentManager = () => {
 
       {error && <div className="text-red-400 text-sm">{error}</div>}
 
-      <div className="grid grid-cols-5 gap-4 flex-1 overflow-hidden">
-        <div className="col-span-3 bg-gray-900 border border-gray-800 rounded-lg p-3 overflow-auto">
+      <div className="flex-1 overflow-hidden">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 h-full overflow-auto">
           <table className="w-full text-sm">
             <thead className="text-gray-400 uppercase text-xs border-b border-gray-800">
               <tr>
                 <th className="text-left py-2">Tên</th>
-                <th className="text-left py-2">Trang</th>
+                <th className="text-left py-2 w-20">Trang</th>
                 <th className="text-left py-2">Tóm tắt</th>
                 <th className="text-left py-2">Thời gian</th>
                 <th className="text-right py-2">Hành động</th>
@@ -172,35 +250,58 @@ const DocumentManager = () => {
               {documents.map((doc) => (
                 <tr
                   key={doc.id}
-                  className={`border-b border-gray-850 hover:bg-gray-850 ${
+                  onClick={() => fetchDetail(doc.id)}
+                  onKeyDown={(event) => handleRowKeyDown(event, doc.id)}
+                  tabIndex={0}
+                  role="button"
+                  className={`border-b border-gray-850 hover:bg-gray-850 cursor-pointer focus:outline-none focus-visible:ring focus-visible:ring-indigo-500/50 ${
                     selectedId === doc.id ? "bg-gray-850" : ""
                   }`}
                 >
-                  <td className="py-3">
-                    <button
-                      type="button"
-                      onClick={() => fetchDetail(doc.id)}
-                      className="text-left text-indigo-300 hover:text-indigo-100 font-semibold"
-                    >
-                      {doc.original_name}
-                    </button>
+                  <td className="py-3 text-left text-indigo-100 font-semibold">
+                    {doc.original_name}
                   </td>
                   <td className="py-3">{doc.pages || 0}</td>
-                  <td className="py-3 text-gray-300 line-clamp-2">
-                    {doc.summary || "-"}
+                  <td className="py-3 text-gray-300">
+                    <span
+                      className="block text-sm"
+                      style={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={doc.summary || "-"}
+                    >
+                      {doc.summary || "-"}
+                    </span>
                   </td>
                   <td className="py-3 text-gray-400">{formatDate(doc.created_at)}</td>
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
                       <button
-                        onClick={() => handleExtractKg(doc.id)}
+                        onClick={(event) => handleDownload(event, doc)}
+                        className="px-3 py-1 bg-blue-700 text-xs rounded hover:bg-blue-600 disabled:opacity-50"
+                        disabled={downloadingId === doc.id}
+                      >
+                        {downloadingId === doc.id ? "Dang tai..." : "Tai xuong"}
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleExtractKg(doc.id);
+                        }}
                         className="px-3 py-1 bg-purple-700 text-xs rounded hover:bg-purple-600 disabled:opacity-50"
                         disabled={extractingId === doc.id}
                       >
                         {extractingId === doc.id ? "Đang trích..." : "Trích KG"}
                       </button>
                       <button
-                        onClick={() => handleDelete(doc.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDelete(doc.id);
+                        }}
                         className="px-3 py-1 bg-red-700 text-xs rounded hover:bg-red-600"
                       >
                         Xóa
@@ -213,37 +314,63 @@ const DocumentManager = () => {
           </table>
         </div>
 
-        <div className="col-span-2 bg-gray-900 border border-gray-800 rounded-lg p-4 overflow-auto space-y-4">
-          {!selectedDoc && (
-            <div className="text-gray-400 text-sm">Chọn hoặc tải lên tài liệu để xem chi tiết.</div>
-          )}
-          {selectedDoc && (
-            <>
+        <p className="text-xs text-gray-500 mt-3">Chon tai lieu de xem chi tiet trong cua so bat len.</p>
+        {loading && <div className="text-sm text-gray-400 mt-2">Dang tai chi tiet...</div>}
+      </div>
+
+      {modalOpen && selectedDoc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => {
+            resetPreviewUrl();
+            setModalOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-4xl bg-gray-900 border border-gray-800 rounded-xl shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
               <div>
                 <h3 className="text-lg font-semibold">{selectedDoc.original_name}</h3>
-                <p className="text-xs text-gray-400">Số trang: {selectedDoc.pages || 0}</p>
                 <p className="text-xs text-gray-400">
-                  Tải lên: {formatDate(selectedDoc.created_at)}
+                  {formatDate(selectedDoc.created_at)} • {selectedDoc.pages || 0} trang
                 </p>
               </div>
+              <button
+                onClick={() => {
+                  resetPreviewUrl();
+                  setModalOpen(false);
+                }}
+                className="px-3 py-1 text-sm rounded bg-gray-800 hover:bg-gray-700"
+              >
+                Đóng
+              </button>
+            </div>
 
-              <div>
-                <h4 className="text-sm font-semibold mb-1 text-indigo-300">Xem nhanh</h4>
-                {previewUrl ? (
+            <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+              {previewUrl && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-1 text-indigo-300">Xem nhanh</h4>
                   <iframe
                     title="Document preview"
                     src={`${previewUrl}#toolbar=0`}
                     className="w-full h-64 rounded border border-gray-800 bg-gray-950"
                   />
-                ) : (
-                  <div className="text-sm text-gray-500">Không có bản xem trước.</div>
-                )}
-              </div>
+                </div>
+              )}
 
               <div>
                 <h4 className="text-sm font-semibold mb-1 text-indigo-300">Tóm tắt</h4>
                 <p className="text-sm text-gray-200 whitespace-pre-wrap">
                   {selectedDoc.summary || "Chưa có tóm tắt."}
+                </p>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold mb-1 text-indigo-300">Trích đoạn</h4>
+                <p className="text-sm text-gray-300 whitespace-pre-wrap max-h-40 overflow-auto">
+                  {selectedDoc.text_excerpt || "Không có nội dung."}
                 </p>
               </div>
 
@@ -270,13 +397,6 @@ const DocumentManager = () => {
               </div>
 
               <div>
-                <h4 className="text-sm font-semibold mb-1 text-indigo-300">Trích đoạn</h4>
-                <p className="text-sm text-gray-300 whitespace-pre-wrap max-h-40 overflow-auto">
-                  {selectedDoc.text_excerpt || "Không có nội dung."}
-                </p>
-              </div>
-
-              <div>
                 <h4 className="text-sm font-semibold mb-1 text-indigo-300">Metadata</h4>
                 <pre className="bg-gray-950 border border-gray-800 rounded p-3 text-xs overflow-auto">
                   {JSON.stringify(selectedDoc.metadata || {}, null, 2)}
@@ -286,19 +406,17 @@ const DocumentManager = () => {
               {kgResult && (
                 <div>
                   <h4 className="text-sm font-semibold mb-1 text-emerald-300">
-                    Knowledge Graph (neo4j:{" "}
-                    {kgResult.neo4j_upserted ? "đã cập nhật" : "chưa kết nối"})
+                    Knowledge Graph (neo4j: {kgResult.neo4j_upserted ? "Đã cập nhật" : "Chưa kết nối"})
                   </h4>
                   <pre className="bg-gray-950 border border-emerald-800/50 rounded p-3 text-xs overflow-auto">
                     {JSON.stringify(kgResult.kg, null, 2)}
                   </pre>
                 </div>
               )}
-            </>
-          )}
-          {loading && <div className="text-sm text-gray-400">Đang tải chi tiết...</div>}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

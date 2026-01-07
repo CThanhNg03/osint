@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import hashlib
+import re
 import uuid
 from datetime import datetime
 from io import BytesIO
@@ -465,17 +466,97 @@ def _apply_person_profile(report: dict, person_profile: dict | None) -> dict:
     return report
 
 
-def _ensure_bullet_format(text: str) -> str:
+def _format_report_section(text: str) -> str:
+    """Return 1 short paragraph plus concise bullets."""
     if not text:
         return ""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    formatted = []
-    for line in lines:
-        if not line.startswith("-"):
-            formatted.append(f"- {line.lstrip('-• ')}")
-        else:
-            formatted.append(line)
-    return "\n".join(formatted)
+    if not lines:
+        return ""
+    paragraph = lines[0].lstrip("-• ").strip()
+    bullets = []
+    for raw in lines[1:]:
+        cleaned = raw.lstrip("-• ").strip()
+        if cleaned:
+            bullets.append(f"- {cleaned}")
+    if not paragraph and bullets:
+        paragraph = bullets.pop(0).lstrip("- ").strip()
+    parts = [paragraph] if paragraph else []
+    parts.extend(bullets)
+    return "\n".join(parts)
+
+
+def _to_plain_paragraph(text: str, limit: int = 800) -> str:
+    """Collapse whitespace into a single readable paragraph."""
+    if not text:
+        return ""
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if limit:
+        normalized = normalized[:limit].rstrip()
+    return normalized
+
+
+def _parse_json_response(raw_text: str) -> dict:
+    cleaned = (raw_text or "").strip()
+    if not cleaned:
+        return {}
+    fence_prefixes = ("```json", "```JSON", "```")
+    for prefix in fence_prefixes:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
+            break
+    if cleaned.endswith("```"):
+        cleaned = cleaned[: -3].strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="LLM returned invalid JSON")
+
+
+def _build_document_kg_prompt(summary_text: str, metadata: dict | None) -> str:
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False, indent=2)
+    return (
+        "Bạn là hệ thống trích xuất tri thức từ báo cáo tiếng Việt.\n"
+        "Sử dụng phần tóm tắt dưới đây để xác định các thực thể (entities) quan trọng "
+        "và các quan hệ (relations) giữa chúng.\n\n"
+        "Trả về JSON với cấu trúc:\n"
+        '{\n'
+        '  "entities": [\n'
+        '    {"name": "Tên", "type": "Person|Organization|Location|Event|Other", "summary": "Mô tả ngắn"}\n'
+        "  ],\n"
+        '  "relations": [\n'
+        '    {"source": "Tên nguồn", "target": "Tên đích", "type": "Quan hệ", "evidence": "Câu chứng minh"}\n'
+        "  ]\n"
+        "}\n\n"
+        "Yêu cầu:\n"
+        "- Chỉ dựa trên nội dung tóm tắt; không bịa thông tin.\n"
+        "- Ưu tiên thực thể có vai trò chính và quan hệ rõ ràng.\n"
+        "- Nếu không chắc chắn, để mảng rỗng.\n"
+        "- Chỉ trả JSON thuần hợp lệ.\n\n"
+        f"Tóm tắt tài liệu:\n\"\"\"\n{summary_text.strip()}\n\"\"\"\n\n"
+        f"Metadata bổ sung (nếu có):\n{metadata_json}\n"
+    )
+
+
+async def _extract_entities_from_summary(summary_text: str, metadata: dict | None, client: OpenAI) -> dict:
+    prompt = _build_document_kg_prompt(summary_text, metadata)
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        model=os.getenv("DOCUMENT_KG_MODEL", "llama-3.1-8b-instant"),
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=600,
+    )
+    raw_text = (response.choices[0].message.content or "").strip()
+    data = _parse_json_response(raw_text) or {}
+    data.setdefault("entities", [])
+    data.setdefault("relations", [])
+    # Normalize naming to keep compatibility with front-end expectations
+    if "relationships" in data and not data.get("relations"):
+        data["relations"] = data["relationships"]
+    if "events" not in data:
+        data["events"] = []
+    return data
 
 
 def _audit_llm_call(model_name, prompt_preview, success, person_identifier=None, response_preview=None, error_message=None, section=None):
@@ -521,10 +602,13 @@ def _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=No
 
     def _request_section(section_key: str, directive: str) -> str | None:
         prompt = (
-            f"Nhiệm vụ: {directive}\n"
-            "Yêu cầu: trả lời dạng bullet, mỗi dòng bắt đầu bằng '- ', không thêm tiêu đề hoặc chú thích khác.\n"
-            "Nếu thiếu dữ liệu hãy ghi rõ '- Chưa đủ dữ liệu để đánh giá'.\n"
-            f"Dữ liệu đồ thị:\n```json\n{snapshot}\n```"
+            f"Nhi?m v?: {directive}\n"
+            "H??ng d?n:\n"
+            "- Lu?n s? d?ng m?i d? li?u hi?n c?; n?u thi?u v?n ph?i r?t ra nh?n ??nh an to?n v? n?u r? ph?n thi?u.\n"
+            "- Vi?t 1 ?o?n v?n ng?n 1-2 c?u tr??c (kh?ng b?t ??u b?ng '-').\n"
+            "- Sau ?? cung c?p t?i ?a 4 g?ch ??u d?ng, m?i d?ng b?t ??u b?ng '- '.\n"
+            "- Kh?ng th?m ti?u ??, kh?ng markdown kh?c, kh?ng ?? tr?ng n?i dung.\n"
+            f"D? li?u ??u v?o (JSON):\n```json\n{snapshot}\n```"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -564,7 +648,7 @@ def _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=No
                 section=section_key,
             )
             return None
-        formatted = _ensure_bullet_format(content)
+        formatted = _format_report_section(content)
         _audit_llm_call(
             model_name,
             prompt_for_audit,
@@ -616,14 +700,14 @@ async def _summarize_document_text(content: str) -> str:
         return ""
     api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return cleaned[:800]
+        return _to_plain_paragraph(cleaned[:800])
     client = OpenAI(
         api_key=api_key,
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
     )
     prompt = (
-        "Tóm tắt tài liệu sau bằng tiếng Việt có dấu. "
-        "Viết 3-5 bullet nêu nội dung chính, sự kiện hoặc nhân vật đáng chú ý.\n"
+        "Tóm tắt tài liệu sau thành một đoạn văn tiếng Việt ngắn gọn "
+        "không gạch đầu dòng, không markdown, tối đa 3 câu, chỉ văn bản thường.\n"
         f"Nội dung:\n{cleaned[:6000]}"
     )
     try:
@@ -635,10 +719,10 @@ async def _summarize_document_text(content: str) -> str:
             max_tokens=400,
         )
         text_resp = (response.choices[0].message.content or "").strip()
-        return _ensure_bullet_format(text_resp) if text_resp else cleaned[:800]
+        return _to_plain_paragraph(text_resp) if text_resp else _to_plain_paragraph(cleaned[:800])
     except Exception as exc:
         print(f"[Documents] Summary generation failed: {exc}")
-        return cleaned[:800]
+        return _to_plain_paragraph(cleaned[:800])
 
 
 def _document_to_dict(rec: DocumentRecord) -> dict:
@@ -649,7 +733,7 @@ def _document_to_dict(rec: DocumentRecord) -> dict:
         "pages": rec.pages,
         "summary": rec.summary,
         "text_excerpt": rec.text_excerpt,
-        "metadata": rec.metadata or {},
+        "metadata": rec.metadata_json or {},
         "created_at": rec.created_at.isoformat() if rec.created_at else None,
     }
 
@@ -1516,6 +1600,7 @@ async def download_document_file(doc_id: int):
         path,
         media_type="application/pdf",
         filename=rec.original_name or path.name,
+        content_disposition_type="inline",
     )
 
 
@@ -1544,7 +1629,7 @@ async def upload_document(file: UploadFile = File(...)):
             pages=parsed.get("pages") or 0,
             summary=summary,
             text_excerpt=parsed.get("excerpt"),
-            metadata={
+            metadata_json={
                 "pdf_metadata": parsed.get("metadata") or {},
                 "size_bytes": len(blob),
             },
@@ -1598,15 +1683,17 @@ async def extract_document_kg(doc_id: int):
         api_key=api_key,
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
     )
-    fake_log = AnalysisLog(
-        source="OCR Document",
-        summary=rec.summary or (rec.text_excerpt or "")[:1000],
-        vietnamese_translation=rec.summary or "",
-        raw_text=rec.text_excerpt or "",
-        sentiment_score=0.0,
-        trending_keywords=[],
-    )
-    kg_data = await extract_kg_for_log(fake_log, client)
+    summary_text = rec.summary or rec.text_excerpt or ""
+    if not summary_text:
+        path = Path(rec.storage_path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Source file missing for extraction")
+        try:
+            parsed = _extract_pdf_metadata(path)
+            summary_text = parsed.get("excerpt") or parsed.get("full_text") or ""
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to read document: {exc}") from exc
+    kg_data = await _extract_entities_from_summary(summary_text, rec.metadata_json or {}, client)
     neo4j_status = False
     if neo4j_client:
         doc_hash = int(hashlib.md5(f"document-{rec.id}".encode("utf-8")).hexdigest()[:16], 16) % (2**63 - 1)
