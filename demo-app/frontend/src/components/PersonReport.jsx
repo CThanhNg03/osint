@@ -2,27 +2,42 @@ import React, { useEffect, useMemo, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const renderBulletBlock = (value) => {
-  if (!value) {
-    return <p className="text-sm text-gray-400">Không có dữ liệu.</p>;
-  }
-  const items = Array.isArray(value)
-    ? value
-    : String(value)
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean);
+const normalizeLines = (value) => {
+  if (!value) return [];
+  const source = Array.isArray(value) ? value : String(value).split(/\n+/);
+  return source
+    .map((line) => line.replace(/^-+\s*/, "").trim())
+    .filter(Boolean);
+};
+
+const truncateText = (text, limit = 220) => {
+  if (!text) return "";
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1).trim()}…`;
+};
+
+const renderSummaryBlock = (value) => {
+  const items = normalizeLines(value);
   if (items.length === 0) {
     return <p className="text-sm text-gray-400">Không có dữ liệu.</p>;
   }
+
+  const paragraph = truncateText(items[0], 320);
+  const bullets = items.slice(1, 5).map((item) => truncateText(item, 200));
+
   return (
-    <ul className="list-disc pl-5 space-y-1 text-sm text-gray-100">
-      {items.map((item, idx) => (
-        <li key={idx} className="leading-snug">
-          {item.replace(/^-+\s*/, "")}
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-2 text-sm text-gray-100">
+      {paragraph && <p className="leading-relaxed">{paragraph}</p>}
+      {bullets.length > 0 && (
+        <ul className="list-disc pl-5 space-y-1 text-sm text-gray-100">
+          {bullets.map((item, idx) => (
+            <li key={idx} className="leading-snug">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 };
 
@@ -163,7 +178,7 @@ const PersonReport = ({ target, onBack }) => {
                 </h3>
                 <p className="text-xs text-slate-400">Situation Summary</p>
               </header>
-              {renderBulletBlock(data?.report?.tom_tat_hanh_dong)}
+              {renderSummaryBlock(data?.report?.tom_tat_hanh_dong)}
               <div className="text-[11px] text-slate-500 uppercase tracking-widest">
                 Nguồn: KG nội bộ + /kg/person-analysis
               </div>
@@ -177,7 +192,7 @@ const PersonReport = ({ target, onBack }) => {
                 <h3 className="text-xl font-bold text-white">Target Profile</h3>
                 <p className="text-xs text-slate-400">Threat & Social Graph</p>
               </header>
-              {renderBulletBlock(data?.report?.ho_so_doi_tuong)}
+              {renderSummaryBlock(data?.report?.ho_so_doi_tuong)}
               <div className="mt-3">
                 <p className="text-xs uppercase text-slate-400 mb-1">
                   Liên hệ cấp 1 nổi bật
@@ -215,7 +230,7 @@ const PersonReport = ({ target, onBack }) => {
                   Economic / Political / Social
                 </p>
               </header>
-              {renderBulletBlock(data?.report?.danh_gia_tac_dong)}
+              {renderSummaryBlock(data?.report?.danh_gia_tac_dong)}
               <div className="mt-3 text-xs text-slate-400">
                 Độ phủ mạng cấp 2: {(data?.level2_nodes || []).length} đối tượng liên quan.
               </div>
@@ -230,7 +245,7 @@ const PersonReport = ({ target, onBack }) => {
                   Strategic Recommendations
                 </h3>
               </header>
-              {renderBulletBlock(data?.report?.khuyen_nghi)}
+              {renderSummaryBlock(data?.report?.khuyen_nghi)}
               <div className="mt-3 text-xs text-slate-400">
                 Ghi chú: Ưu tiên các hoạt động có thể triển khai trong 24-48 giờ.
               </div>

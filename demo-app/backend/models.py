@@ -36,5 +36,5 @@ class DocumentRecord(Base):
     pages = Column(Integer, default=0)
     summary = Column(Text, nullable=True)
     text_excerpt = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    metadata_json = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
