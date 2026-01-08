@@ -11,7 +11,7 @@ const formatDate = (value) => {
   }
 };
 
-const DocumentManager = () => {
+const DocumentManager = ({ onOpenPersonSearch }) => {
   const [documents, setDocuments] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -21,6 +21,10 @@ const DocumentManager = () => {
   const [extractingId, setExtractingId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [kgResult, setKgResult] = useState(null);
+  const [imageModalDoc, setImageModalDoc] = useState(null);
+  const [docImages, setDocImages] = useState([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [imageError, setImageError] = useState("");
   const fileInputRef = useRef(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -163,6 +167,51 @@ const DocumentManager = () => {
     }
   };
 
+  const handleExtractImages = async (doc) => {
+    if (!doc?.id) return;
+    setImageModalDoc(doc);
+    setDocImages([]);
+    setImageError("");
+    setLoadingImages(true);
+    try {
+      const resp = await fetch(`${API_URL}/documents/${doc.id}/images?limit=12`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Không trích xuất được ảnh");
+      setDocImages(data.images || []);
+    } catch (err) {
+      setImageError(err.message || "Không trích xuất được ảnh");
+    } finally {
+      setLoadingImages(false);
+    }
+  };
+
+  const closeImagesModal = () => {
+    setImageModalDoc(null);
+    setDocImages([]);
+    setImageError("");
+  };
+
+  const handleSendImageToPersonSearch = (image) => {
+    if (!image || typeof window === "undefined" || !onOpenPersonSearch) return;
+    try {
+      const byteCharacters = window.atob(image.data || "");
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i += 1) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: image.media_type || "image/png" });
+      const fileName = `${imageModalDoc?.original_name || "document"}-p${(image.page ?? 0) + 1}.png`;
+      const file = new File([blob], fileName, { type: image.media_type || "image/png" });
+      const preview = URL.createObjectURL(blob);
+      onOpenPersonSearch?.({ file, preview });
+      closeImagesModal();
+      setModalOpen(false);
+    } catch (err) {
+      setImageError(err.message || "Không thể gửi ảnh sang Face Search");
+    }
+  };
+
   const handleDownload = async (event, doc) => {
     event.stopPropagation();
     setDownloadingId(doc.id);
@@ -280,6 +329,15 @@ const DocumentManager = () => {
                   <td className="py-3 text-gray-400">{formatDate(doc.created_at)}</td>
                   <td className="py-3 text-right">
                     <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleExtractImages(doc);
+                        }}
+                        className="px-3 py-1 bg-slate-700 text-xs rounded hover:bg-slate-600"
+                      >
+                        Faces
+                      </button>
                       <button
                         onClick={(event) => handleDownload(event, doc)}
                         className="px-3 py-1 bg-blue-700 text-xs rounded hover:bg-blue-600 disabled:opacity-50"
@@ -411,6 +469,61 @@ const DocumentManager = () => {
                   <pre className="bg-gray-950 border border-emerald-800/50 rounded p-3 text-xs overflow-auto">
                     {JSON.stringify(kgResult.kg, null, 2)}
                   </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {imageModalDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <div>
+                <h3 className="text-lg font-semibold">
+                  Ảnh trích xuất — {imageModalDoc.original_name || imageModalDoc.filename}
+                </h3>
+                <p className="text-xs text-gray-400">Chọn ảnh phù hợp để gửi sang Face Search.</p>
+              </div>
+              <button
+                onClick={closeImagesModal}
+                className="px-3 py-1 text-sm rounded bg-gray-800 hover:bg-gray-700"
+              >
+                Đóng
+              </button>
+            </div>
+            <div className="p-4 max-h-[80vh] overflow-y-auto space-y-3">
+              {loadingImages && <div className="text-sm text-gray-300">Đang trích ảnh...</div>}
+              {!loadingImages && imageError && (
+                <div className="text-sm text-red-400">{imageError}</div>
+              )}
+              {!loadingImages && !imageError && docImages.length === 0 && (
+                <div className="text-sm text-gray-400">Không tìm thấy ảnh trong tài liệu này.</div>
+              )}
+              {!loadingImages && docImages.length > 0 && (
+                <div className="grid grid-cols-3 gap-4">
+                  {docImages.map((img) => (
+                    <div
+                      key={img.id}
+                      className="bg-gray-950 border border-gray-800 rounded-lg p-2 space-y-2 flex flex-col"
+                    >
+                      <img
+                        src={`data:${img.media_type || 'image/png'};base64,${img.data}`}
+                        alt={img.id}
+                        className="w-full h-40 object-contain rounded border border-gray-800 bg-gray-900"
+                      />
+                      <div className="text-xs text-gray-400">
+                        Trang {(img.page ?? 0) + 1} • {img.media_type?.replace('image/', '') || 'png'}
+                      </div>
+                      <button
+                        onClick={() => handleSendImageToPersonSearch(img)}
+                        className="px-3 py-2 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-500"
+                      >
+                        Gửi sang Face Search
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -100,6 +100,12 @@ function App() {
     };
   }, [processingEnabled]);
 
+  useEffect(() => {
+    if (view !== 'personSearch' && personImage) {
+      setPersonImage(null);
+    }
+  }, [view, personImage]);
+
   const toggleProcessing = async () => {
     if (togglingLive) return;
     setTogglingLive(true);
@@ -288,7 +294,13 @@ function App() {
 
       {view === 'documents' && (
         <div className='flex-1 overflow-hidden'>
-          <DocumentManager />
+          <DocumentManager
+            onOpenPersonSearch={(imagePayload) => {
+              if (!imagePayload) return;
+              setPersonImage(imagePayload);
+              setView('personSearch');
+            }}
+          />
         </div>
       )}
 

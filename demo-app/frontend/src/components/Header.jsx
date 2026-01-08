@@ -34,6 +34,12 @@ const Header = ({ view, onChangeView, processingEnabled, togglingLive = false, o
           People DB
         </button>
         <button
+          className={`${baseBtn} ${view === 'personSearch' ? active : inactive}`}
+          onClick={() => onChangeView('personSearch')}
+        >
+          Face Search
+        </button>
+        <button
           className={`${baseBtn} ${view === 'documents' ? active : inactive}`}
           onClick={() => onChangeView('documents')}
         >

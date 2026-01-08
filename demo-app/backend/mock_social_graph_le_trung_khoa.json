@@ -1,0 +1,56 @@
+{
+  "source": "mock",
+  "person_name": "Le Trung Khoa",
+  "person_id": "mock-person-le-trung-khoa",
+  "primary_account_id": "acct1",
+  "accounts": [
+    { "id": "acct1", "handle": "@letrungkhoa71", "display_name": "Le Trung Khoa" },
+    { "id": "acct2", "handle": "@marie_lane", "display_name": "Marie Lane" },
+    { "id": "acct3", "handle": "@insight_corner", "display_name": "Insight Corner" },
+    { "id": "acct4", "handle": "@openforum_daily", "display_name": "Open Forum Daily" },
+    { "id": "acct5", "handle": "@lucas_mind", "display_name": "Lucas Mind" },
+    { "id": "acct6", "handle": "@mirrorbyte", "display_name": "MirrorByte" }
+  ],
+  "posts": [
+    {
+      "id": "post1",
+      "account_id": "person",
+      "text": "Just published: my notes on transparency in public communication. Curious what people think.",
+      "timestamp": "2025-12-01T09:10:00Z"
+    },
+    {
+      "id": "post2",
+      "account_id": "person",
+      "text": "It's interesting how online discussions shift so quickly—sharing a few observations from this week.",
+      "timestamp": "2025-12-01T11:45:00Z"
+    },
+    {
+      "id": "post3",
+      "account_id": "person",
+      "text": "Working on a longer commentary about media ecosystems and their influence. Early thoughts here.",
+      "timestamp": "2025-12-01T14:20:00Z"
+    },
+    {
+      "id": "post4",
+      "account_id": "person",
+      "text": "Community feedback matters—thanks for the constructive messages over the past few days.",
+      "timestamp": "2025-12-01T16:00:00Z"
+    }
+  ],
+  "edges": [
+    { "source": "acct2", "target": "post1", "type": "commented_on" },
+    { "source": "acct3", "target": "post1", "type": "commented_on" },
+
+    { "source": "acct2", "target": "post2", "type": "commented_on" },
+    { "source": "acct4", "target": "post2", "type": "commented_on" },
+    { "source": "acct5", "target": "post2", "type": "commented_on" },
+
+    { "source": "acct3", "target": "post3", "type": "commented_on" },
+    { "source": "acct6", "target": "post3", "type": "commented_on" },
+
+    { "source": "acct1", "target": "post4", "type": "commented_on" },
+    { "source": "acct5", "target": "post4", "type": "commented_on" },
+    { "source": "acct6", "target": "post4", "type": "commented_on" }
+  ],
+  "mock": true
+}
