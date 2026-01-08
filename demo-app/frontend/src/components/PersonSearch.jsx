@@ -17,8 +17,8 @@ const resolvePersonApiUrl = () => {
 };
 
 const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
-  const [imagePreview, setImagePreview] = useState(initialImage?.preview || '');
-  const [imageFile, setImageFile] = useState(initialImage?.file || null);
+  const [images, setImages] = useState([]);
+  const [activeImageId, setActiveImageId] = useState('');
   const [faces, setFaces] = useState([]);
   const [requestId, setRequestId] = useState('');
   const [personInfo, setPersonInfo] = useState(null);
@@ -65,10 +65,36 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
   };
 
   const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const timestamp = Date.now();
+    const newItems = files.map((file, idx) => ({
+      id: `upload-${timestamp}-${idx}`,
+      file,
+      preview: URL.createObjectURL(file),
+    }));
+    setImages((prev) => [...prev, ...newItems]);
+    if (!activeImageId && newItems[0]) {
+      setActiveImageId(newItems[0].id);
+    }
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const activeImage = images.find((img) => img.id === activeImageId) || images[0];
+  const handleSelectImage = (imgId) => {
+    if (imgId === activeImageId) return;
+    setActiveImageId(imgId);
+    setFaces([]);
+    setPersonInfo(null);
+    setPersonMatches([]);
+    setRequestId('');
+    setSelectedFaceId('');
+    setSelectedAccount(null);
+    setHasSocialPreview(false);
+    setStatusMsg('');
+    setError('');
   };
 
   const handleSelectFace = async (faceId) => {
@@ -85,8 +111,8 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
         const buf = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i += 1) buf[i] = bin.charCodeAt(i);
         blob = new Blob([buf], { type: 'image/jpeg' });
-      } else if (imageFile) {
-        blob = imageFile;
+      } else if (activeImage?.file) {
+        blob = activeImage.file;
       } else {
         throw new Error('No face preview or image to search');
       }
@@ -184,6 +210,20 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
 
   useEffect(() => {
     if (initialImage?.file) {
+      const newEntry = {
+        id: `initial-${Date.now()}`,
+        file: initialImage.file,
+        preview: initialImage.preview || URL.createObjectURL(initialImage.file),
+      };
+      setImages((prev) => {
+        prev.forEach((img) => {
+          if (img.preview?.startsWith('blob:')) {
+            URL.revokeObjectURL(img.preview);
+          }
+        });
+        return [newEntry];
+      });
+      setActiveImageId(newEntry.id);
       detectImage(initialImage.file);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,14 +233,26 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
     <div className="h-full bg-gray-900 text-white p-4 flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Human Search</h2>
-          <p className="text-sm text-gray-400">Upload or capture a frame, pick a face, retrieve info.</p>
+          <h2 className="text-lg font-semibold">Capture & Face Search</h2>
+          <p className="text-sm text-gray-400">Upload hoặc chụp nhiều khung hình, chọn mặt và truy vết thông tin.</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => {
+              images.forEach((img) => {
+                if (img.preview?.startsWith('blob:')) {
+                  URL.revokeObjectURL(img.preview);
+                }
+              });
+              setImages([]);
+              setActiveImageId('');
               setFaces([]);
               setPersonInfo(null);
+              setPersonMatches([]);
+              setRequestId('');
+              setSelectedFaceId('');
+              setSelectedAccount(null);
+              setHasSocialPreview(false);
               setStatusMsg('');
               setError('');
             }}
@@ -224,12 +276,12 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
               <h4 className="text-sm font-semibold">Image</h4>
               <label className="text-xs cursor-pointer bg-indigo-600 hover:bg-indigo-500 px-3 py-1 rounded font-semibold">
                 Upload
-                <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
               </label>
             </div>
-            {imagePreview ? (
+            {activeImage ? (
               <img
-                src={imagePreview}
+                src={activeImage.preview}
                 alt="preview"
                 className="w-full max-h-64 object-contain rounded border border-gray-800"
               />
@@ -237,12 +289,31 @@ const PersonSearch = ({ initialImage, onBack, onExploreKG }) => {
               <div className="text-sm text-gray-500">No image selected.</div>
             )}
             <button
-              onClick={() => detectImage(imageFile)}
-              disabled={!imageFile || loading}
+              onClick={() => detectImage(activeImage?.file)}
+              disabled={!activeImage?.file || loading}
               className="mt-3 w-full bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-2 text-sm font-semibold disabled:opacity-50"
             >
               {loading ? 'Processing...' : 'Detect faces'}
             </button>
+            {images.length > 1 && (
+              <div className="mt-3">
+                <div className="text-xs text-gray-400 mb-1">Uploaded images</div>
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {images.map((img) => (
+                    <button
+                      type="button"
+                      key={img.id}
+                      onClick={() => handleSelectImage(img.id)}
+                      className={`border rounded-md ${
+                        (activeImageId || activeImage?.id) === img.id ? 'border-indigo-500' : 'border-gray-700'
+                      }`}
+                    >
+                      <img src={img.preview} alt={img.id} className="w-16 h-16 object-cover rounded-md" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {statusMsg && <div className="text-xs text-gray-400 mt-2">{statusMsg}</div>}
             {error && <div className="text-xs text-red-400 mt-2">{error}</div>}
           </div>

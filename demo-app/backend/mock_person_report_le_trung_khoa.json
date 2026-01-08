@@ -1,0 +1,115 @@
+{
+  "person": {
+    "id": "mock-person-le-trung-khoa",
+    "display_name": "Le Trung Khoa",
+    "type": "Person",
+    "properties": {
+      "person_id": "mock-person-le_trung_khoa",
+      "role": "Nhà bình luận truyền thông độc lập",
+      "nationality": "Việt Nam",
+      "location": "Berlin, Đức"
+    }
+  },
+  "person_profile": {
+    "name": "Le Trung Khoa",
+    "nationality": "Việt Nam",
+    "date_of_birth": "1971-05-22",
+    "id_number": "VN7171001",
+    "aliases": [
+      "Khoa LTK",
+      "Le Khoa"
+    ],
+    "note": "Nhà sáng lập diễn đàn phản biện, thường xuyên bình luận chính trị - xã hội."
+  },
+  "level1_nodes": [
+    {
+      "relationship": "QUAN_HE",
+      "direction": "out",
+      "node": {
+        "id": "acct2",
+        "display_name": "Marie Lane",
+        "type": "Account",
+        "properties": {
+          "handle": "@marie_lane",
+          "role": "Nhà báo độc lập"
+        }
+      }
+    },
+    {
+      "relationship": "QUAN_HE",
+      "direction": "out",
+      "node": {
+        "id": "acct3",
+        "display_name": "Insight Corner",
+        "type": "Account",
+        "properties": {
+          "handle": "@insight_corner",
+          "role": "Kênh tổng hợp phân tích"
+        }
+      }
+    },
+    {
+      "relationship": "QUAN_HE",
+      "direction": "out",
+      "node": {
+        "id": "acct4",
+        "display_name": "Open Forum Daily",
+        "type": "Account",
+        "properties": {
+          "handle": "@openforum_daily",
+          "role": "Cộng đồng tranh luận mở"
+        }
+      }
+    }
+  ],
+  "level2_nodes": [
+    {
+      "via": "acct2",
+      "relationship": "CHAN_DUNG",
+      "direction": "out",
+      "node": {
+        "id": "post2",
+        "display_name": "Bài tổng hợp diễn biến tuần",
+        "type": "Post",
+        "properties": {
+          "text": "It's interesting how online discussions shift so quickly—sharing a few observations from this week.",
+          "timestamp": "2025-12-01T11:45:00Z"
+        }
+      }
+    },
+    {
+      "via": "acct3",
+      "relationship": "NHAC_LAI",
+      "direction": "out",
+      "node": {
+        "id": "post3",
+        "display_name": "Bình luận về hệ sinh thái truyền thông",
+        "type": "Post",
+        "properties": {
+          "text": "Working on a longer commentary about media ecosystems and their influence. Early thoughts here.",
+          "timestamp": "2025-12-01T14:20:00Z"
+        }
+      }
+    },
+    {
+      "via": "acct5",
+      "relationship": "TUONG_TAC",
+      "direction": "out",
+      "node": {
+        "id": "post4",
+        "display_name": "Cảm ơn phản hồi cộng đồng",
+        "type": "Post",
+        "properties": {
+          "text": "Community feedback matters—thanks for the constructive messages over the past few days.",
+          "timestamp": "2025-12-01T16:00:00Z"
+        }
+      }
+    }
+  ],
+  "report": {
+    "tom_tat_hanh_dong": "- Le Trung Khoa duy trì nhịp độ đăng bài đều đặn về chủ đề minh bạch thông tin.\n- Ba tài khoản đối thoại chính (Marie Lane, Insight Corner, Open Forum Daily) tạo thành vòng đối thoại trung tâm.\n- Nội dung tuần qua tập trung vào tổng kết diễn biến và tác động của các kênh truyền thông xã hội đối với độc giả Việt ở châu Âu.",
+    "ho_so_doi_tuong": "- Họ tên: Le Trung Khoa\n- Quốc tịch: Việt Nam, cư trú tại Berlin.\n- Vai trò: Nhà bình luận độc lập, điều hành một diễn đàn phản biện chuyên bàn về minh bạch thông tin.\n- Đặc điểm: Có khả năng huy động ý kiến cộng đồng và kết nối nguồn thông tin từ mạng xã hội quốc tế.",
+    "danh_gia_tac_dong": "- Ảnh hưởng của Khoa tập trung ở cộng đồng người Việt tại châu Âu; bài viết nhanh chóng được trích dẫn lại bởi kênh trung gian như Insight Corner.\n- Các chủ đề về minh bạch thông tin và phản biện chính sách tiếp tục thu hút trao đổi hai chiều, đặc biệt trong nhóm Open Forum Daily.\n- Xu hướng tuần này chuyển từ phân tích chính sách sang tổng hợp quan sát và kêu gọi phản hồi, giảm nhiệt các bài viết mang tính đối đầu.",
+    "khuyen_nghi": "- Duy trì theo dõi ba tài khoản liên kết chính, đặc biệt khi họ khuếch đại thông điệp gốc.\n- Thu thập thêm dữ liệu từ cộng đồng phản hồi để đánh giá mức độ lan truyền thực tế.\n- Nếu cần phản biện hoặc định hình dư luận, nên tiếp cận qua các cuộc trao đổi chủ đề minh bạch thông tin để giữ tính xây dựng."
+  }
+}

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import hashlib
@@ -25,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
+from PIL import Image
 
 from chat_handler import answer_question
 from database import Base, engine, get_db, SessionLocal
@@ -513,6 +515,41 @@ def _parse_json_response(raw_text: str) -> dict:
         raise HTTPException(status_code=502, detail="LLM returned invalid JSON")
 
 
+def _load_mock_person_report(person: dict) -> dict | None:
+    mock_path = Path(__file__).parent / "mock_person_report_le_trung_khoa.json"
+    if not mock_path.exists():
+        return None
+    try:
+        payload = json.loads(mock_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    target_names = {
+        (payload.get("person") or {}).get("display_name"),
+        ((payload.get("person") or {}).get("properties") or {}).get("name"),
+        payload.get("person_name"),
+    }
+    target_ids = {
+        (payload.get("person") or {}).get("id"),
+        ((payload.get("person") or {}).get("properties") or {}).get("person_id"),
+    }
+    current_name = (
+        person.get("display_name")
+        or (person.get("properties") or {}).get("name")
+        or person.get("id")
+        or ""
+    ).strip().lower()
+    current_id = (
+        (person.get("properties") or {}).get("person_id")
+        or person.get("id")
+        or ""
+    ).strip().lower()
+    normalized_targets = { (name or "").strip().lower() for name in target_names if name }
+    normalized_ids = { (pid or "").strip().lower() for pid in target_ids if pid }
+    if (current_name and current_name in normalized_targets) or (current_id and current_id in normalized_ids):
+        return payload
+    return None
+
+
 def _build_document_kg_prompt(summary_text: str, metadata: dict | None) -> str:
     metadata_json = json.dumps(metadata or {}, ensure_ascii=False, indent=2)
     return (
@@ -559,6 +596,80 @@ async def _extract_entities_from_summary(summary_text: str, metadata: dict | Non
     return data
 
 
+def _extract_pdf_images(pdf_path: Path, max_images: int = 10) -> list[dict]:
+    results: list[dict] = []
+    reader = PdfReader(str(pdf_path))
+    for page_index, page in enumerate(reader.pages):
+        if len(results) >= max_images:
+            break
+        resources = page.get("/Resources")
+        if not resources:
+            continue
+        xobject = resources.get("/XObject")
+        if not xobject:
+            continue
+        try:
+            xobject = xobject.get_object()
+        except Exception:
+            continue
+        for _, obj in xobject.items():
+            if len(results) >= max_images:
+                break
+            try:
+                subtype = obj.get("/Subtype")
+            except Exception:
+                continue
+            if subtype != "/Image":
+                continue
+            try:
+                base_data = obj.get_data()
+            except Exception:
+                continue
+            width = obj.get("/Width") or 0
+            height = obj.get("/Height") or 0
+            color_space = obj.get("/ColorSpace")
+            if isinstance(color_space, list) and color_space:
+                color_space = color_space[0]
+            filter_name = obj.get("/Filter")
+            media_type = "image/png"
+            image_bytes = None
+            if filter_name == "/DCTDecode":
+                image_bytes = base_data
+                media_type = "image/jpeg"
+            elif filter_name == "/JPXDecode":
+                image_bytes = base_data
+                media_type = "image/jp2"
+            else:
+                mode = "RGB"
+                if color_space == "/DeviceCMYK":
+                    mode = "CMYK"
+                elif color_space == "/DeviceGray":
+                    mode = "L"
+                try:
+                    img = Image.frombytes(mode, (width, height), base_data)
+                    if mode == "CMYK":
+                        img = img.convert("RGB")
+                    buffer = BytesIO()
+                    img.save(buffer, format="PNG")
+                    image_bytes = buffer.getvalue()
+                    media_type = "image/png"
+                except Exception:
+                    continue
+            if not image_bytes:
+                continue
+            results.append(
+                {
+                    "id": f"page{page_index}_{len(results)}",
+                    "page": page_index,
+                    "width": width,
+                    "height": height,
+                    "media_type": media_type,
+                    "data": base64.b64encode(image_bytes).decode("ascii"),
+                }
+            )
+    return results
+
+
 def _audit_llm_call(model_name, prompt_preview, success, person_identifier=None, response_preview=None, error_message=None, section=None):
     """Simple console audit for LLM invocations."""
     prompt_snippet = (prompt_preview or "").strip()
@@ -593,7 +704,10 @@ def _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=No
         or (person.get("properties") or {}).get("id")
         or person.get("id")
     )
-    system_prompt = "Bạn là chuyên gia phân tích mạng xã hội, luôn trả lời tiếng Việt có dấu."
+    system_prompt = (
+        "Bạn là giám sát tình báo thuộc chính phủ Việt Nam. Luôn đánh giá hoạt động mạng xã hội bằng tiếng Việt có dấu, "
+        "giọng nghiêm túc, ưu tiên góc nhìn an ninh nhà nước và nhấn mạnh nguy cơ ảnh hưởng chính trị."
+    )
     section_instructions = {
         "tom_tat_hanh_dong": "Tóm tắt các hành động, bài đăng, thông điệp và tương tác gần nhất của đối tượng và nguồn liên quan.",
         "danh_gia_tac_dong": "Đánh giá tác động xã hội/chính trị/kinh tế của các hành động và kết nối đó.",
@@ -1552,6 +1666,15 @@ async def kg_person_analysis(node_id: str = Query(..., description="Person eleme
     """Generate a Vietnamese analysis report for a person node and its close social graph."""
     person, level1_nodes, level2_nodes = _get_person_graph(node_id)
     person_profile = _fetch_person_profile(person)
+    mock_payload = _load_mock_person_report(person)
+    if mock_payload:
+        return {
+            "person": mock_payload.get("person") or person,
+            "level1_nodes": mock_payload.get("level1_nodes") or level1_nodes,
+            "level2_nodes": mock_payload.get("level2_nodes") or level2_nodes,
+            "person_profile": mock_payload.get("person_profile") or person_profile,
+            "report": mock_payload.get("report") or _generate_fallback_report(person, level1_nodes, level2_nodes),
+        }
     report = _generate_graph_report(person, level1_nodes, level2_nodes, person_profile=person_profile)
     return {
         "person": person,
@@ -1582,6 +1705,30 @@ async def get_document(doc_id: int):
         return _document_to_dict(rec)
     finally:
         db.close()
+
+
+@app.get("/documents/{doc_id}/images")
+async def document_images(
+    doc_id: int,
+    limit: int = Query(6, ge=1, le=30, description="Maximum number of images to extract"),
+):
+    db = SessionLocal()
+    try:
+        rec = db.query(DocumentRecord).filter(DocumentRecord.id == doc_id).first()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Document not found")
+    finally:
+        db.close()
+    pdf_path = Path(rec.storage_path)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found")
+    try:
+        images = _extract_pdf_images(pdf_path, max_images=limit)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to extract images: {exc}") from exc
+    return {"document_id": doc_id, "count": len(images), "images": images}
 
 
 @app.get("/documents/{doc_id}/file")
